@@ -118,3 +118,26 @@ describe('계좌 화면 사진 읽기', () => {
     expect(next.cash).toEqual([{ account: 'ISA', currency: 'KRW', amount: 500 }]);
   });
 });
+
+describe('OCR 오류 대응', () => {
+  it("'원'을 숫자로 읽은 금액(21,833,1208)과 '…'로 줄인 이름", () => {
+    const text = `ISA
+1,000,500원
+투자
+시세 평가   총수익 ㆍ 직접설정순
+KODEX                           400,0008
+S  미국배당커버드콜액티브          -20,000원 (-4.76%)
+40주
+TIGER                            350,000원
+(er  미국나스닥100레버리지...        -10,000원(-2.8%)
+35주
+현금
+(w]  원                                     250,500원`;
+    const r = matchHoldings(parseAccountScreen(text, ACCOUNTS), holdings());
+    expect(r.rows.map((x) => [x.code, x.quantity, x.value, x.pnl])).toEqual([
+      ['441640', 40, 400_000, -20_000],
+      ['418660', 35, 350_000, -10_000],
+    ]);
+    expect(r.rows[1].matched).toBe('name');
+  });
+});

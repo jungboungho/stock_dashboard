@@ -32,7 +32,11 @@ export interface PhotoResult {
   cashUSD: number | null;
 }
 
-const AMOUNT = /[+\-−~]?\d{1,3}(?:[,.]\d{3})+(?![\d.,]*\d)/g;
+/**
+ * 쉼표로 묶인 금액. '원'을 숫자 하나로 잘못 읽는 경우(21,833,1208)가 있어,
+ * 세 자리씩 맞게 묶인 뒤에 붙은 숫자 한 개는 금액에서 뺀다.
+ */
+const AMOUNT = /[+\-−~]?\d{1,3}(?:[,.]\d{3})+(?=\d?(?![\d.,]*\d))/g;
 const toNum = (s: string) => Number(s.replace(/[+\-−~,.]/g, '')) * (/^[\-−~]/.test(s) ? -1 : 1);
 const signed = (s: string) => /^[+\-−~]/.test(s);
 /** 앱 화면의 메뉴 · 광고 줄 (종목 이름에 '배당' 같은 글자가 들어가므로 줄 모양으로 거른다) */
@@ -54,6 +58,13 @@ function similarity(a: string, b: string): number {
   let inter = 0;
   for (const [g, n] of ga) inter += Math.min(n, gb.get(g) ?? 0);
   return (2 * inter) / (A.length - 1 + B.length - 1 || 1);
+}
+
+/** 앱이 긴 이름을 '…'로 줄인 경우: 줄이기 전 앞부분이 보유 종목 이름의 앞부분과 같으면 맞춘다 */
+function prefixScore(ocr: string, name: string): number {
+  if (!/(\.{1,3}|…)\s*$/.test(ocr.trim())) return 0;
+  const head = norm(ocr.replace(/(\.{1,3}|…)\s*$/, ''));
+  return head.length >= 6 && norm(name).startsWith(head) ? 0.95 : 0;
 }
 
 /** 이름 앞의 아이콘 OCR 찌꺼기 (S, (er, @, 숭 …) 제거 */
@@ -225,7 +236,7 @@ export function matchHoldings(res: PhotoResult, h: HoldingsState): PhotoResult {
     let score = 0;
     for (const r of pool) {
       if (used.has(r) && r.account === res.account) continue;
-      const s = Math.max(similarity(row.ocrName, r.name), r.code ? similarity(row.ocrName, r.code) : 0);
+      const s = Math.max(similarity(row.ocrName, r.name), r.code ? similarity(row.ocrName, r.code) : 0, prefixScore(row.ocrName, r.name));
       if (s > score) [best, score] = [r, s];
     }
     return best && score >= 0.45 ? take(row, best, 'name') : row;
