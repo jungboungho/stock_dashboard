@@ -12,3 +12,4 @@ credential*.txt
 __pycache__/
 proxy/.dev.vars
 .wrangler/
+*.traineddata

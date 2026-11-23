@@ -30,13 +30,13 @@
                 <span>② 최신 정보 가져오기</span>
                 <small id="sync-state">NH 계좌 잔고 · 모든 종목 현재가</small>
               </button>
+              <button type="button" role="menuitem" id="menu-photo">
+                <span>사진으로 계좌 업데이트</span>
+                <small>증권사 앱 계좌 화면 캡처로 종목 · 수량 · 현금 갱신 (ISA · 연금 · IRP)</small>
+              </button>
               <button type="button" role="menuitem" id="menu-export">
                 <span>③ 엑셀 업데이트</span>
                 <small id="export-state">보유종목 · 그룹 · 일별 / 월별 자산추이 저장, Summary 연결</small>
-              </button>
-              <button type="button" role="menuitem" id="menu-settings">
-                <span>동기화 설정</span>
-                <small>중계 서버 주소 · 접속 토큰</small>
               </button>
               <button type="button" role="menuitem" id="menu-clear" class="danger">
                 <span>불러온 데이터 지우기</span>
@@ -44,6 +44,7 @@
               </button>
             </div>
             <input type="file" id="excel-input" accept=".xlsx" hidden />
+            <input type="file" id="photo-input" accept="image/*" multiple hidden />
           </div>
           <button class="icon-btn" id="theme-toggle" type="button" aria-label="화면 테마 전환">◐</button>
         </div>
@@ -186,6 +187,7 @@
           <div class="seg small" id="hold-account-seg" role="group" aria-label="계좌 선택"></div>
           <button type="button" class="btn primary" id="holding-add">+ 종목 추가</button>
           <button type="button" class="btn" id="cash-edit">현금 수정</button>
+          <button type="button" class="btn" id="holding-photo">사진으로 업데이트</button>
         </div>
         <p class="empty-state" id="hold-empty" hidden></p>
         <div class="table-wrap" id="hold-wrap"><table id="hold-table" class="data"></table></div>

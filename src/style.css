@@ -921,3 +921,59 @@ details#dep-log summary {
   font-size: 13px;
   padding: 6px 0;
 }
+
+/* 사진으로 계좌 업데이트 — 확인 화면 */
+.dialog.wide {
+  width: min(960px, calc(100vw - 24px));
+  max-width: none;
+}
+.photo-sec {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.photo-head,
+.photo-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.field.inline span {
+  white-space: nowrap;
+}
+.photo-table input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+.photo-table td:first-child {
+  min-width: 150px;
+}
+.photo-table input.num,
+.photo-foot input.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 76px;
+}
+.photo-table input.code-in {
+  min-width: 64px;
+}
+.photo-table small.ocr {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}

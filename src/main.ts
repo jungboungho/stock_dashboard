@@ -53,6 +53,8 @@ import {
   type TrendCharts,
 } from './ui/charts';
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
+import { openPhotoReview, recognizeImages } from './ui/photo';
+import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -197,7 +199,18 @@ async function pickExcel(mode: 'import' | 'export') {
   if (openPicker) {
     try {
       const [h] = await openPicker({ types: [{ description: '엑셀', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }], multiple: false });
-      const file = await h.getFile();
+      let file: File;
+      try {
+        file = await h.getFile();
+      } catch {
+        // 구글 드라이브 같은 동기화 폴더는 브라우저가 '바로 저장' 방식으로 열지 못할 때가 있다 → 일반 파일 선택으로
+        showNote(
+          `이 위치의 파일은 브라우저가 바로 열 수 없어 일반 방식으로 엽니다. <button type="button" class="btn primary" data-act="pick-excel-fallback">${mode === 'export' ? '업데이트할' : '불러올'} 파일 다시 고르기</button> (이 방식에서는 ③ 엑셀 업데이트가 파일을 내려받습니다)`,
+          false,
+          true,
+        );
+        return;
+      }
       await onPicked(new Uint8Array(await file.arrayBuffer()), file.name, h);
     } catch (e) {
       if ((e as DOMException)?.name !== 'AbortError') showNote(`엑셀을 열지 못했습니다: ${e instanceof Error ? e.message : String(e)}`, true);
@@ -376,13 +389,20 @@ function buildControls() {
     setMenu(false);
     void pickExcel('import');
   });
+  $('menu-photo').addEventListener('click', () => {
+    setMenu(false);
+    pickPhotos();
+  });
+  $('holding-photo').addEventListener('click', () => pickPhotos());
+  $<HTMLInputElement>('photo-input').addEventListener('change', async (e) => {
+    const input = e.target as HTMLInputElement;
+    const files = [...(input.files ?? [])];
+    input.value = '';
+    if (files.length) await updateFromPhotos(files);
+  });
   $('menu-export').addEventListener('click', () => {
     setMenu(false);
     void exportExcel();
-  });
-  $('menu-settings').addEventListener('click', () => {
-    setMenu(false);
-    dialogSettings();
   });
   $('menu-clear').addEventListener('click', () => {
     setMenu(false);
@@ -432,6 +452,7 @@ function buildControls() {
     if (act === 'down-group' && group) mutate(() => moveGroup(store, group, 1));
     if (act === 'add-to-group' && group) dialogAddToGroup(group);
     if (act === 'new-stock-in-group' && group) addStockDialog(group);
+    if (act === 'pick-excel-fallback') $<HTMLInputElement>('excel-input').click();
     const { account } = b.dataset;
     if (act === 'edit-holding' && key && account) dialogHolding({ account, key }, null);
     if (act === 'delete-holding' && key && account) confirmDeleteHolding(account, key);
@@ -1222,11 +1243,20 @@ async function exportExcel() {
     const out = upsertSheets(bytes, sheets, target && links.length ? { sheet: target.sheet, updates: links } : undefined);
     parseStockBook(readWorkbook(out), book.fileName); // 다시 읽히는지 확인
     let where: string;
+    let saved = false;
     if (excelHandle) {
-      if (excelHandle.requestPermission && (await excelHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') throw new Error('파일에 쓸 권한이 없습니다');
-      const w = await excelHandle.createWritable();
-      await w.write(out);
-      await w.close();
+      try {
+        if (excelHandle.requestPermission && (await excelHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') throw new Error('권한 없음');
+        const w = await excelHandle.createWritable();
+        await w.write(out);
+        await w.close();
+        saved = true;
+      } catch (e) {
+        if ((e as DOMException)?.name === 'AbortError') throw e;
+        excelHandle = null; // 이 파일은 바로 저장할 수 없음 → 내려받기
+      }
+    }
+    if (saved && excelHandle) {
       where = `${excelHandle.name}에 저장했습니다`;
     } else {
       const url = URL.createObjectURL(new Blob([out as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -1247,6 +1277,46 @@ async function exportExcel() {
   } catch (ex) {
     if ((ex as DOMException)?.name === 'AbortError') return;
     showNote(`엑셀을 저장하지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}. 엑셀에서 파일을 열어 두었다면 닫고 다시 시도하세요.`, true);
+  }
+}
+
+// ─── 사진으로 계좌 업데이트 ───────────────────────────────────
+
+function pickPhotos() {
+  if (!excelBook) {
+    showNote('먼저 "① 엑셀 불러오기"로 주식.xlsx를 불러오세요. 사진에서 읽은 종목은 엑셀의 계좌에 반영됩니다.', true);
+    return;
+  }
+  $<HTMLInputElement>('photo-input').click();
+}
+
+async function updateFromPhotos(files: File[]) {
+  if (!excelBook) return;
+  const book = excelBook;
+  const usd = bookUsdKrw(book);
+  const accounts = holdingAccounts();
+  const totals = Object.fromEntries(Object.entries(accountTotals(book.holdings, usd)).map(([a, t]) => [a, t.value + t.cash]));
+  try {
+    const texts = await recognizeImages(files, (msg) => showNote(msg));
+    const results = texts.map((t) => {
+      const r = parseAccountScreen(t, accounts);
+      r.account ??= guessAccountByTotal(r.total, totals) ?? (files.length === 1 && holdAccount !== 'ALL' ? holdAccount : null);
+      return matchHoldings(r, book.holdings);
+    });
+    showNote(`사진 ${files.length}장을 읽었습니다. 확인 화면에서 값을 확인하고 적용하세요.`);
+    openPhotoReview(results, accounts, usd, (list) => {
+      let h = book.holdings;
+      for (const r of list) {
+        h = applyPhoto(h, r.account, r.rows, r.cashKRW, r.cashUSD, usd);
+        // 새로 들어온 종목 키가 그룹에 없으면 그대로 미분류
+      }
+      holdingsChanged(h);
+      holdAccount = list.length === 1 ? list[0].account : 'ALL';
+      renderHoldings();
+      showNote(`${list.map((r) => r.account).join(', ')} 계좌를 사진 값으로 바꿨습니다. "② 최신 정보 가져오기"로 현재가를 맞추고 "③ 엑셀 업데이트"로 저장하세요.`);
+    });
+  } catch (ex) {
+    showNote(`사진을 읽지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true);
   }
 }
 
