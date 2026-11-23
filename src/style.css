@@ -1011,15 +1011,18 @@ html {
 .layout > #app {
   flex: 1;
   min-width: 0;
+  margin-left: 200px; /* 고정된 메뉴바 폭만큼 */
 }
+/* 메뉴바는 화면에 고정 (스크롤해도 항상 보임) */
 .sidebar {
-  position: sticky;
+  position: fixed;
+  z-index: 30;
+  left: 0;
   top: 0;
-  height: 100vh;
-  flex: 0 0 200px;
+  bottom: 0;
   width: 200px;
   box-sizing: border-box;
-  padding: 20px 12px 16px;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
   border-right: 1px solid var(--border);
   background: var(--surface);
   display: flex;
@@ -1136,14 +1139,16 @@ html {
 .nav-toggle {
   display: none;
 }
-@media (max-width: 1000px) {
+/* 휴대폰: 메뉴바는 서랍, ☰ 버튼은 화면 왼쪽 위에 떠 있어 스크롤해도 누를 수 있음 */
+@media (max-width: 760px) {
+  .layout > #app {
+    margin-left: 0;
+  }
+  .title-row {
+    padding-left: 46px;
+  }
   .sidebar {
-    position: fixed;
     z-index: 40;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    height: auto;
     width: 240px;
     padding-top: calc(20px + env(safe-area-inset-top, 0px));
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
@@ -1165,8 +1170,12 @@ html {
   }
   .nav-toggle {
     display: inline-flex;
-    flex: none;
-    margin-top: 2px;
+    position: fixed;
+    z-index: 41;
+    top: calc(14px + env(safe-area-inset-top, 0px));
+    left: max(12px, env(safe-area-inset-left, 0px));
+    background: var(--surface);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
   }
 }
 @media (prefers-reduced-motion: reduce) {

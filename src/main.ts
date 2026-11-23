@@ -313,7 +313,7 @@ function pressed(container: HTMLElement, id: string | null, attr = 'id') {
 
 // ─── 왼쪽 메뉴바 ─────────────────────────────────────────────
 
-const narrow = () => window.matchMedia('(max-width: 1000px)').matches;
+const narrow = () => window.matchMedia('(max-width: 760px)').matches;
 
 function setDrawer(open: boolean) {
   $('sidebar').classList.toggle('open', open);
