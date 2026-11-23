@@ -863,6 +863,7 @@ details#trades summary {
   top: calc(100% + 6px);
   z-index: 20;
   width: 290px;
+  max-width: calc(100vw - 32px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -976,4 +977,13 @@ details#dep-log summary {
   color: var(--text-muted);
   font-size: 11px;
   margin-top: 2px;
+}
+
+/* 휴대폰: 버튼이 왼쪽으로 내려오므로 메뉴도 왼쪽 기준으로 펼치고 화면 폭 안에 둔다 */
+@media (max-width: 640px) {
+  .menu {
+    left: 0;
+    right: auto;
+    width: min(320px, calc(100vw - 32px));
+  }
 }
