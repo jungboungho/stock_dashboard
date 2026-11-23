@@ -311,7 +311,98 @@ function pressed(container: HTMLElement, id: string | null, attr = 'id') {
   container.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset[attr] === id)));
 }
 
+// ─── 왼쪽 메뉴바 ─────────────────────────────────────────────
+
+const narrow = () => window.matchMedia('(max-width: 1000px)').matches;
+
+function setDrawer(open: boolean) {
+  $('sidebar').classList.toggle('open', open);
+  $('nav-backdrop').hidden = !open;
+  $('nav-toggle').setAttribute('aria-expanded', String(open));
+  if (open) ($('side-nav').querySelector('a:not([hidden])') as HTMLElement | null)?.focus();
+}
+
+/** 지금 화면 위쪽에 있는 섹션을 메뉴에서 표시 */
+function markActiveSection() {
+  const links = [...$('side-nav').querySelectorAll<HTMLAnchorElement>('a[data-target]')].filter((a) => !a.hidden);
+  let current = links[0];
+  for (const a of links) {
+    const el = document.getElementById(a.dataset.target!);
+    if (el && el.getBoundingClientRect().top <= 140) current = a;
+  }
+  // 페이지 끝에 닿으면 마지막 섹션
+  if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) current = links.at(-1) ?? current;
+  for (const a of links) a.classList.toggle('active', a === current);
+}
+
+/** 숨겨진 섹션(배당 · 계좌별 입금이 없을 때)은 메뉴에서도 숨김 */
+function syncNavItems() {
+  for (const a of $('side-nav').querySelectorAll<HTMLAnchorElement>('a[data-target]')) {
+    const el = document.getElementById(a.dataset.target!);
+    a.hidden = !el || el.hidden;
+  }
+  markActiveSection();
+}
+
+function buildNav() {
+  $('side-nav').addEventListener('click', (e) => {
+    const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-target]');
+    if (!a) return;
+    e.preventDefault();
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById(a.dataset.target!)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    if (narrow()) setDrawer(false);
+  });
+  $('nav-toggle').addEventListener('click', () => setDrawer(!$('sidebar').classList.contains('open')));
+  $('nav-backdrop').addEventListener('click', () => setDrawer(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && $('sidebar').classList.contains('open')) {
+      setDrawer(false);
+      $('nav-toggle').focus();
+    }
+  });
+  let ticking = false;
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        markActiveSection();
+        ticking = false;
+      });
+    },
+    { passive: true },
+  );
+
+  // 기간: 자산 추이 카드의 기간과 같은 상태를 쓴다
+  segButtons($('side-preset'), PRESETS, (id) => applyPreset(id as Preset));
+  const onSideDate = () => {
+    const a = { start: $<HTMLInputElement>('side-start').value, end: $<HTMLInputElement>('side-end').value };
+    if (a.start && a.end && a.start <= a.end) {
+      state.rangeA = a;
+      state.preset = null;
+      if (state.compare) state.rangeB = previousRange(state.rangeA);
+      renderAll();
+    }
+  };
+  $('side-start').addEventListener('change', onSideDate);
+  $('side-end').addEventListener('change', onSideDate);
+}
+
+/** 메뉴바 기간 표시를 지금 상태에 맞춤 */
+function syncSidePeriod() {
+  pressed($('side-preset'), state.preset);
+  const start = $<HTMLInputElement>('side-start');
+  const end = $<HTMLInputElement>('side-end');
+  start.min = end.min = firstActiveDate();
+  start.max = end.max = lastDate();
+  start.value = state.rangeA.start;
+  end.value = state.rangeA.end;
+}
+
 function buildControls() {
+  buildNav();
   segButtons($('preset-seg'), PRESETS, (id) => applyPreset(id as Preset));
 
   $('return-mode').addEventListener('click', (e) => {
@@ -556,6 +647,8 @@ function renderAll() {
   renderAllocation();
   renderDividendSection();
   renderHoldings();
+  syncSidePeriod();
+  syncNavItems();
 }
 
 function signed(n: number, text: string) {
