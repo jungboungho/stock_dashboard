@@ -27,6 +27,8 @@ export interface CashRow {
 }
 export interface SyncAccount {
   name: string;
+  /** NH 계좌번호 끝 4자리 */
+  suffix?: string;
   rows: HoldingRow[];
   cash: CashRow[];
 }
@@ -322,7 +324,7 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     usdKrw ??= g.usdKrw;
     const cash: CashRow[] = [{ account: name, currency: 'KRW', amount: k.cash ?? a.cash ?? 0 }];
     if (g.cashUsd) cash.push({ account: name, currency: 'USD', amount: g.cashUsd });
-    accounts.push({ name, rows: [...k.rows, ...g.rows, ...a.rows], cash });
+    accounts.push({ name, suffix: act_no.slice(-4), rows: [...k.rows, ...g.rows, ...a.rows], cash });
 
     if (dividendsFrom) {
       try {

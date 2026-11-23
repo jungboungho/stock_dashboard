@@ -129,6 +129,8 @@ export function setCash(h: HoldingsState, account: string, currency: Currency, a
 
 export interface SyncAccount {
   name: string;
+  /** NH 계좌번호 끝 4자리 */
+  suffix?: string;
   rows: HoldingRow[];
   cash: CashRow[];
 }

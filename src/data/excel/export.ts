@@ -10,11 +10,36 @@ import {
   HOLDINGS_SHEET,
   MONTHLY_SHEET,
   OLD_SNAPSHOT_SHEET,
+  SETTINGS_SHEET,
+  sheetRows,
   type DailyRow,
   type ExcelBook,
   type ExcelGroup,
 } from './parse';
 import type { CellUpdate, SheetData } from './write';
+import type { Workbook } from './xlsx';
+
+const NH_LABEL = /^NH\s*계좌\s*(\d{3,6})$/;
+
+/**
+ * '설정' 시트에 아직 없는 NH 계좌 줄을 덧붙인다 (기존 내용은 그대로).
+ * 이름이 정해진 계좌는 B열에 이름을, 새 계좌는 B열을 비워 둔다 (사용자가 채우면 다음 동기화부터 반영).
+ * 덧붙일 줄이 없으면 null (시트를 다시 쓰지 않음).
+ */
+export function settingsWithNhAccounts(wb: Workbook, accounts: { suffix: string; name: string | null }[]): SheetData | null {
+  const rows = sheetRows(wb, SETTINGS_SHEET) ?? [['항목', '값', '설명']];
+  const have = new Set(rows.map((r) => NH_LABEL.exec(String(r[0] ?? '').trim())?.[1]).filter(Boolean));
+  const add = accounts.filter((a) => !have.has(a.suffix));
+  if (!add.length) return null;
+  for (const a of add) {
+    rows.push([
+      `NH 계좌 ${a.suffix}`,
+      a.name ?? null,
+      a.name ? 'NH 동기화로 반영되는 계좌' : '새로 응답한 NH 계좌 — B열에 대시보드 계좌 이름(예: ISA)을 적고 엑셀을 다시 불러오면 다음 동기화부터 반영',
+    ]);
+  }
+  return { name: SETTINGS_SHEET, widths: [18, 70, 50], rows };
+}
 
 /** 그룹 설정(화면) → 엑셀 '그룹' 시트에 쓸 목록 */
 export function groupsForExport(store: GroupStore): ExcelGroup[] {

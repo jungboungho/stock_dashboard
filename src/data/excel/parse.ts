@@ -64,6 +64,8 @@ export interface ExcelBook {
   dividends: DividendEntry[];
   /** '월별 자산추이' 시트의 월 → 기말자산 (원). Summary 기말자산이 빈 달에 쓴다 */
   monthlyValues: Record<string, number>;
+  /** 동기화로 확인한 NH 계좌 (끝자리 · 대시보드 이름, 이름 없으면 null) → ③ 엑셀 업데이트 때 '설정' 시트에 줄 추가 */
+  nhAccounts?: { suffix: string; name: string | null }[];
 }
 
 /** 예전(v2)에 저장된 값도 읽는다 */
@@ -112,6 +114,22 @@ interface Grid {
   get(col: string | number, row: number): string | number | undefined;
   rows: number[];
   maxCol: number;
+}
+
+/** 시트의 값을 행 · 열 배열로 (빈 칸은 null). '설정' 시트를 내용 그대로 다시 쓸 때 쓴다 */
+export function sheetRows(book: Workbook, name: string): (string | number | null)[][] | null {
+  const cells = findSheet(book, name);
+  if (!cells) return null;
+  const g = grid(cells);
+  const last = g.rows.at(-1) ?? 0;
+  const out: (string | number | null)[][] = [];
+  for (let r = 1; r <= last; r++) {
+    const row: (string | number | null)[] = [];
+    for (let c = 1; c <= g.maxCol; c++) row.push(g.get(c, r) ?? null);
+    while (row.length && row.at(-1) === null) row.pop();
+    out.push(row);
+  }
+  return out;
 }
 
 function grid(cells: SheetCells): Grid {

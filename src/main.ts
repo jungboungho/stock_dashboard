@@ -6,7 +6,7 @@ import { bookUsdKrw, makeExcelModel } from './data/excelModel';
 import { parseStockBook, parseSyncSettings, summaryEndCells, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
 import { readWorkbook } from './data/excel/xlsx';
 import { upsertSheets } from './data/excel/write';
-import { buildExportSheets, groupsForExport, monthlyFromSheets, summaryLinkCells, upsertDaily } from './data/excel/export';
+import { buildExportSheets, groupsForExport, monthlyFromSheets, settingsWithNhAccounts, summaryLinkCells, upsertDaily } from './data/excel/export';
 import { accountTotals, applySync, holdingKey, removeHolding, setCash, upsertHolding, type HoldingRow, type HoldingsState } from './data/holdings';
 import { checkProxy, fetchSync, loadSyncSettings, normalizeUrl, saveSyncSettings } from './data/sync';
 import type { DashboardData, Position } from './data/model';
@@ -1315,6 +1315,11 @@ async function runSync() {
       book.dividends = merged.rows;
       newDividends = merged.added;
     }
+    // NH 가 응답한 계좌(이름 있는 것 · 없는 것)를 기억 → ③ 엑셀 업데이트 때 '설정' 시트에 줄 추가
+    const seen = new Map((book.nhAccounts ?? []).map((a) => [a.suffix, a.name]));
+    for (const a of res.accounts) if (a.suffix) seen.set(a.suffix, a.name);
+    for (const u of res.unmapped ?? []) if (!seen.get(u.suffix)) seen.set(u.suffix, null);
+    book.nhAccounts = [...seen].map(([suffix, name]) => ({ suffix, name }));
     holdingsChanged(next);
     const apiNames = res.accounts.map((a) => a.name);
     const priced = new Set(next.rows.filter((r) => !apiNames.includes(r.account) && r.code && res.prices[r.code]).map((r) => r.code)).size;
@@ -1390,9 +1395,13 @@ async function exportExcel() {
     const sheets = buildExportSheets(book, groups);
     const monthly = monthlyFromSheets(sheets);
     // Summary 기말자산: 일별 기록이 시작된 달부터 '월별 자산추이'와 수식으로 연결
-    const target = summaryEndCells(readWorkbook(bytes));
+    const wb = readWorkbook(bytes);
+    const target = summaryEndCells(wb);
     const fromMonth = book.dailyLog[0]?.date.slice(0, 7);
     const links = target && fromMonth ? summaryLinkCells(book, target, monthly, fromMonth) : [];
+    // '설정' 시트: 동기화로 확인한 NH 계좌 중 아직 없는 줄만 덧붙임 (새 계좌는 B열 비움)
+    const settingsSheet = settingsWithNhAccounts(wb, book.nhAccounts ?? []);
+    if (settingsSheet) sheets.push(settingsSheet);
     const out = upsertSheets(bytes, sheets, target && links.length ? { sheet: target.sheet, updates: links } : undefined);
     parseStockBook(readWorkbook(out), book.fileName); // 다시 읽히는지 확인
     let where: string;
@@ -1425,7 +1434,7 @@ async function exportExcel() {
     book.monthlyValues = monthly;
     saveExcelLocal();
     showNote(
-      `${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 일별 자산추이 ${book.dailyLog.length}일 · 월별 자산추이 ${Object.keys(monthly).length}개월${links.length ? ` · Summary 기말자산 ${fromMonth}부터 연결` : ''}.`,
+      `${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 일별 자산추이 ${book.dailyLog.length}일 · 월별 자산추이 ${Object.keys(monthly).length}개월${links.length ? ` · Summary 기말자산 ${fromMonth}부터 연결` : ''}${settingsSheet ? ` · 설정 시트에 NH 계좌 줄 추가 (B열이 빈 줄은 계좌 이름을 적어 주세요)` : ''}.`,
     );
   } catch (ex) {
     if ((ex as DOMException)?.name === 'AbortError') return;
