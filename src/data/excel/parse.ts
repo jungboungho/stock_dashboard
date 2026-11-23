@@ -70,6 +70,9 @@ export const HOLDINGS_SHEET = '보유종목';
 export const GROUPS_SHEET = '그룹';
 export const SNAPSHOT_SHEET = '자산스냅샷';
 export const CASH_CODE = '현금';
+export const SETTINGS_SHEET = '설정';
+export const SETTING_URL = '중계 서버 주소';
+export const SETTING_TOKEN = '접속 토큰';
 
 // ─── 셀 도우미 ────────────────────────────────────────────────
 
@@ -338,6 +341,26 @@ export function parseGroups(book: Workbook): ExcelGroup[] {
     if (key && !g.keys.includes(key)) g.keys.push(key);
   }
   return out;
+}
+
+/**
+ * '설정' 시트의 동기화 설정 (어느 칸이든 '중계 서버 주소' · '접속 토큰' 오른쪽 칸 값).
+ * 브라우저에 저장된 엑셀 값(ExcelBook)에는 넣지 않고, 불러올 때 동기화 설정으로만 옮긴다.
+ */
+export function parseSyncSettings(book: Workbook): { url: string; token: string } | null {
+  const cells = findSheet(book, SETTINGS_SHEET);
+  if (!cells) return null;
+  const g = grid(cells);
+  let url = '';
+  let token = '';
+  for (const r of g.rows) {
+    for (let c = 1; c < g.maxCol; c++) {
+      const label = str(g.get(c, r));
+      if (label === SETTING_URL) url = str(g.get(c + 1, r));
+      if (label === SETTING_TOKEN) token = str(g.get(c + 1, r));
+    }
+  }
+  return url && token ? { url, token } : null;
 }
 
 export function parseSnapshotLog(book: Workbook): SnapshotLogRow[] {

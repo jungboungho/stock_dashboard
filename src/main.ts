@@ -3,7 +3,7 @@ import { DummyProvider } from './data/dummy';
 import { loadPortfolio } from './data/provider';
 import { makeDummyModel } from './data/dummyModel';
 import { bookUsdKrw, makeExcelModel } from './data/excelModel';
-import { parseStockBook, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
+import { parseStockBook, parseSyncSettings, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
 import { readWorkbook } from './data/excel/xlsx';
 import { upsertSheets } from './data/excel/write';
 import { buildExportSheets, groupsForExport, nextSnapshotLog } from './data/excel/export';
@@ -165,7 +165,19 @@ function storeFromGroups(groups: ExcelGroup[]): GroupStore {
 }
 
 function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | null) {
-  const book = parseStockBook(readWorkbook(bytes), fileName);
+  const wb = readWorkbook(bytes);
+  const book = parseStockBook(wb, fileName);
+  // '설정' 시트에 중계 서버 주소 · 토큰이 있으면 이 브라우저의 동기화 설정으로 저장
+  let syncNote = '';
+  const sync = parseSyncSettings(wb);
+  if (sync) {
+    try {
+      saveSyncSettings({ url: normalizeUrl(sync.url), token: sync.token });
+      syncNote = ' 동기화 설정도 엑셀에서 가져왔습니다.';
+    } catch (e) {
+      syncNote = ` '설정' 시트의 중계 서버 주소를 쓸 수 없습니다 (${e instanceof Error ? e.message : String(e)}).`;
+    }
+  }
   excelBook = book;
   excelBytes = bytes;
   excelHandle = handle;
@@ -176,7 +188,7 @@ function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | n
   setModel(makeExcelModel(book));
   const n = book.holdings.rows.length;
   showNote(
-    `${fileName}을(를) 불러왔습니다 · 보유종목 ${n}개 · 그룹 ${book.groups.length}개. ${n ? '"② 최신 정보 가져오기"로 현재가를 반영하세요.' : '보유 종목 표에서 계좌별로 종목을 추가하거나 "② 최신 정보 가져오기"를 누르세요.'}${saved ? '' : ' (브라우저 저장 공간이 부족해 새로고침하면 다시 불러와야 합니다)'}`,
+    `${fileName}을(를) 불러왔습니다 · 보유종목 ${n}개 · 그룹 ${book.groups.length}개. ${n ? '"② 최신 정보 가져오기"로 현재가를 반영하세요.' : '보유 종목 표에서 계좌별로 종목을 추가하거나 "② 최신 정보 가져오기"를 누르세요.'}${syncNote}${saved ? '' : ' (브라우저 저장 공간이 부족해 새로고침하면 다시 불러와야 합니다)'}`,
   );
 }
 
@@ -1140,7 +1152,7 @@ function dialogSettings(thenSync = false) {
   const cur = loadSyncSettings();
   openForm({
     title: '동기화 설정',
-    description: 'NH 투자증권 Open API 중계 서버(내 Cloudflare Worker 또는 PC에서 실행한 서버)의 주소와 접속 토큰입니다. 이 브라우저에만 저장됩니다. 둘 다 비우면 연결을 끊습니다.',
+    description: 'NH 투자증권 Open API 중계 서버(내 Cloudflare Worker 또는 PC에서 실행한 서버)의 주소와 접속 토큰입니다. 엑셀 \'설정\' 시트에 "중계 서버 주소" · "접속 토큰"을 적어 두면 엑셀을 불러올 때 자동으로 채워집니다. 둘 다 비우면 연결을 끊습니다.',
     fields: [
       { name: 'url', label: '중계 서버 주소', value: cur?.url ?? '', placeholder: 'https://stock-dashboard-proxy.<이름>.workers.dev' },
       { name: 'token', label: '접속 토큰', value: cur?.token ?? '', placeholder: '중계 서버의 PROXY_TOKEN' },
