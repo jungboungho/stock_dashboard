@@ -87,7 +87,7 @@ def main() -> None:
     token = get_token(key, secret)
 
     info = call(token, "/n2/acctinfo", {})
-    if str(info.get("rsp_cd", "")).startswith("HTTP401"):
+    if str(info.get("rsp_cd", "")).startswith("HTTP401") or "IGW40043" in str(info.get("rsp_msg", "")):  # 무효 토큰
         token = get_token(key, secret, force=True)
         info = call(token, "/n2/acctinfo", {})
     accts = rows(info, "Output_0")

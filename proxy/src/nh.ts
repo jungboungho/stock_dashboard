@@ -104,13 +104,17 @@ export class NhClient {
       headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ Input_0: input }),
     });
-    if (res.status === 401 && !retried) {
+    // 토큰이 무효면 NH 는 401 또는 HTTP 400 + IGW40043("유효하지 않은 token") 으로 답한다
+    // (같은 앱키로 다른 곳에서 새 토큰을 받으면 예전 토큰은 무효가 됨) → 한 번만 새로 받는다
+    const body = (await res.json().catch(() => ({}))) as Json;
+    const invalidToken = res.status === 401 || s(body.rsp_cd) === 'IGW40043' || /유효하지 않은 token/i.test(s(body.rsp_msg));
+    if (invalidToken && !retried) {
       this.token = null;
       await this.getToken(true);
       return this.call(path, input, true);
     }
-    if (!res.ok) throw new Error(`NH ${path} HTTP ${res.status}`);
-    return (await res.json()) as Json;
+    if (!res.ok) throw new Error(`NH ${path} HTTP ${res.status}${body.rsp_msg ? ` ${s(body.rsp_msg)}` : ''}`);
+    return body;
   }
 }
 
@@ -147,7 +151,9 @@ export function mapGbStock(account: string, r: Json): { rows: HoldingRow[]; cash
       };
     })
     .filter((x) => x.quantity > 0);
-  return { rows: items, cashUsd: head ? n(head.fc_dca) : null, usdKrw };
+  // 달러 현금 = 외화예수금 + 외화미결제정산금액 (체결됐지만 결제 전인 매수 대금을 빼야 종목과 이중으로 세지 않음.
+  // NH 의 외화자산금액 = 외화평가금액 + 이 값)
+  return { rows: items, cashUsd: head ? Math.round((n(head.fc_dca) + n(head.fc_ny_stl_xcl_amt)) * 100) / 100 : null, usdKrw };
 }
 
 export function mapGold(account: string, r: Json): { rows: HoldingRow[]; cash: number | null } {

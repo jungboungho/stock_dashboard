@@ -172,7 +172,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
 describe('NH 중계 서버 응답 변환', () => {
   it('해외주식 잔고 → 종목 · 달러 예수금 · 환율', () => {
     const r = mapGbStock('종합', {
-      Output_0: { fc_dca: 12.5 },
+      Output_0: { fc_dca: 112.5, fc_ny_stl_xcl_amt: -100 }, // 결제 전 매수 대금 100달러
       Output_1: [{ iem_cd: 'schd', iem_nm: '슈왑 미국 배당주 ETF', cns_bse_bnc_qty: 4, fc_abk_amt: 100, fc_sec_end_pr: 30, krw_abk_amt1: 140000, cur_cd: 'USD', tdt_sby_bse_xcg_rt: 1350 }],
     });
     expect(r).toEqual({
@@ -207,5 +207,30 @@ describe('NH 중계 서버 응답 변환', () => {
     expect(res.prices).toEqual({ '360750': 23680 });
     expect(res.usdKrw).toBe(1337);
     expect(res.warnings[0]).toContain('금계좌');
+  });
+});
+
+describe('NH 토큰 무효 응답', () => {
+  it('HTTP 400 + IGW40043 이면 토큰을 한 번 새로 받아 다시 부른다', async () => {
+    const calls: string[] = [];
+    let issued = 0;
+    const fake = (async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      calls.push(path);
+      if (path === '/oauth2/token') {
+        issued += 1;
+        return new Response(JSON.stringify({ access_token: 'new', expires_in: 86400 }), { status: 200 });
+      }
+      const auth = new Headers(init?.headers).get('Authorization');
+      if (auth !== 'Bearer new') return new Response(JSON.stringify({ rsp_cd: 'IGW40043', rsp_msg: '유효하지 않은 token 입니다.' }), { status: 400 });
+      return new Response(JSON.stringify({ rsp_msg: '조회가 완료되었습니다.', Output_0: [] }), { status: 200 });
+    }) as typeof fetch;
+    let saved: unknown = null;
+    const tokens: TokenStore = { get: async () => ({ access_token: 'old', expires_at: Date.now() / 1000 + 3600 }), set: async (t) => void (saved = t) };
+    const res = await buildSync({ appKey: 'k', appSecret: 's', accounts: '', tokens, fetch: fake, intervalMs: 0 }, []);
+    expect(issued).toBe(1);
+    expect(calls).toEqual(['/n2/acctinfo', '/oauth2/token', '/n2/acctinfo']);
+    expect(saved).toMatchObject({ access_token: 'new' });
+    expect(res.accounts).toEqual([]);
   });
 });
