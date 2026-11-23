@@ -113,7 +113,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     book.holdings = removeHolding(h, 'ISA', '360750');
     const out2 = upsertSheets(out1, buildExportSheets(book, groups, '2026-11-30'));
     const wb2 = readWorkbook(out2);
-    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '일별 자산추이', '월별 자산추이']);
+    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '일별 자산추이', '배당', '월별 자산추이']);
     expect(parseStockBook(wb2).holdings.rows).toHaveLength(1);
   });
 
@@ -122,7 +122,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     const book = parseStockBook(readWorkbook(old), 'test.xlsx');
     expect(book.dailyLog).toEqual([{ date: '2026-11-20', total: 100, accounts: { ISA: 100 } }]);
     const out = upsertSheets(old, buildExportSheets(book, [], '2026-11-30'));
-    expect(Object.keys(readWorkbook(out))).toEqual(['Summary', '입금내역', '일별 자산추이', '설정', '보유종목', '그룹', '월별 자산추이']);
+    expect(Object.keys(readWorkbook(out))).toEqual(['Summary', '입금내역', '일별 자산추이', '설정', '보유종목', '그룹', '배당', '월별 자산추이']);
   });
 
   it('Summary 기말자산은 일별 기록이 시작된 달부터 월별 자산추이와 수식으로 연결', () => {

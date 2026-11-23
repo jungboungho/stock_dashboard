@@ -61,6 +61,6 @@ export async function checkProxy(s: SyncSettings): Promise<{ accounts: string[] 
 }
 
 /** NH 계좌 잔고 + 나머지 계좌 종목의 현재가 */
-export async function fetchSync(s: SyncSettings, h: HoldingsState, apiAccounts: string[]): Promise<SyncResult> {
-  return request<SyncResult>(s, '/sync', { quotes: quoteTargets(h, apiAccounts) });
+export async function fetchSync(s: SyncSettings, h: HoldingsState, apiAccounts: string[], dividendsFrom: string | null = null): Promise<SyncResult> {
+  return request<SyncResult>(s, '/sync', { quotes: quoteTargets(h, apiAccounts), dividendsFrom });
 }

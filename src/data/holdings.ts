@@ -140,6 +140,9 @@ export interface SyncResult {
   accounts: SyncAccount[];
   /** 종목코드 → 현재가 (종목 통화) */
   prices: Record<string, number>;
+  /** dividendsFrom 부터 NH 계좌의 배당 입금 (금액은 그 통화) */
+  dividends?: { date: string; account: string; code: string; name: string; currency: Currency; amount: number }[];
+  dividendsFrom?: string | null;
   /** 받지 못한 항목 */
   warnings: string[];
 }

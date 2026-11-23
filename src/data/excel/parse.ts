@@ -2,6 +2,7 @@ import type { SheetCells, Workbook } from './xlsx';
 import type { YearStart } from '../model';
 import type { Currency, ISODate } from '../../types';
 import { emptyHoldings, holdingKey, type HoldingsState } from '../holdings';
+import type { DividendEntry } from '../dividends';
 
 /**
  * 사용자가 관리하던 '주식.xlsx' 구조를 읽어 앱 데이터로 바꾼다.
@@ -59,6 +60,8 @@ export interface ExcelBook {
   holdings: HoldingsState;
   groups: ExcelGroup[];
   dailyLog: DailyRow[];
+  /** '배당' 시트 (NH 동기화 + 직접 적은 것) */
+  dividends: DividendEntry[];
   /** '월별 자산추이' 시트의 월 → 기말자산 (원). Summary 기말자산이 빈 달에 쓴다 */
   monthlyValues: Record<string, number>;
 }
@@ -74,6 +77,7 @@ export function upgradeBook(raw: unknown): ExcelBook | null {
     holdings: b.holdings ?? emptyHoldings(),
     groups: b.groups ?? [],
     dailyLog: b.dailyLog ?? dailyFromLong(snapshotLog ?? []),
+    dividends: b.dividends ?? [],
     monthlyValues: b.monthlyValues ?? {},
   };
 }
@@ -85,6 +89,7 @@ export const OLD_SNAPSHOT_SHEET = '자산스냅샷';
 export const DAILY_SHEET = '일별 자산추이';
 export const MONTHLY_SHEET = '월별 자산추이';
 export const TOTAL_LABEL = '합계';
+export const DIVIDEND_SHEET = '배당';
 export const CASH_CODE = '현금';
 export const SETTINGS_SHEET = '설정';
 export const SETTING_URL = '중계 서버 주소';
@@ -295,6 +300,7 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
     holdings,
     groups: parseGroups(book),
     dailyLog: parseDaily(book),
+    dividends: parseDividends(book, holdings.usdKrw ?? usdKrw),
     monthlyValues: parseMonthly(book),
   };
 }
@@ -419,6 +425,21 @@ export function parseDaily(book: Workbook): DailyRow[] {
       if (!DAILY_METRICS.includes(k) && n !== undefined) accounts[k] = n;
     }
     out.push({ date, total, accounts });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** '배당' 시트: 날짜 · 계좌 · 종목코드 · 종목명 · 통화 · 금액 · 원화금액 · 출처 (출처가 비면 '직접') */
+export function parseDividends(book: Workbook, usdKrw: number): DividendEntry[] {
+  const out: DividendEntry[] = [];
+  for (const r of table(findSheet(book, DIVIDEND_SHEET), ['날짜', '계좌', '금액'])) {
+    const date = toDate(r['날짜']);
+    const account = str(r['계좌']);
+    const amount = num(r['금액']);
+    if (!date || !account || amount === undefined || amount === 0) continue;
+    const currency = currencyOf(r['통화']);
+    const krw = num(r['원화금액']) ?? Math.round(amount * (currency === 'USD' ? usdKrw : 1));
+    out.push({ date, account, code: str(r['종목코드']).toUpperCase(), name: str(r['종목명']), currency, amount, krw, source: str(r['출처']).toUpperCase() === 'API' ? 'API' : '직접' });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }

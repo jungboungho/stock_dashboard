@@ -30,11 +30,24 @@ export interface SyncAccount {
   rows: HoldingRow[];
   cash: CashRow[];
 }
+/** 배당 입금 한 건 (금액은 그 통화, 세후 입금액) */
+export interface DividendRow {
+  date: string; // YYYY-MM-DD
+  account: string;
+  /** 지금 보유 종목이면 티커 · 국내코드, 아니면 NH 종목코드(ISIN) */
+  code: string;
+  name: string;
+  currency: Currency;
+  amount: number;
+}
 export interface SyncResult {
   asOf: string;
   usdKrw: number | null;
   accounts: SyncAccount[];
   prices: Record<string, number>;
+  /** dividendsFrom 부터 오늘까지 NH 계좌의 배당 입금 */
+  dividends: DividendRow[];
+  dividendsFrom: string | null;
   warnings: string[];
 }
 
@@ -94,14 +107,31 @@ export class NhClient {
     return (this.token = body.access_token);
   }
 
-  async call(path: string, input: Json, retried = false): Promise<Json> {
+  async call(path: string, input: Json): Promise<Json> {
+    return (await this.request(path, input)).body;
+  }
+
+  /** 연속조회: 응답 헤더 cts · cts_flag 를 다음 요청 헤더에 실어 끝까지 (같은 cts 가 오면 멈춤) */
+  async callAll(path: string, input: Json, block = 'Output_0', maxPages = 40): Promise<Json[]> {
+    const out: Json[] = [];
+    let cts = '';
+    for (let page = 0; page < maxPages; page++) {
+      const { body, next } = await this.request(path, input, cts);
+      out.push(...rows(body, block));
+      if (!next || next === cts) break;
+      cts = next;
+    }
+    return out;
+  }
+
+  private async request(path: string, input: Json, cts = '', retried = false): Promise<{ body: Json; next: string }> {
     const gap = (this.cfg.intervalMs ?? 220) - (Date.now() - this.last);
     if (gap > 0) await new Promise((r) => setTimeout(r, gap));
     this.last = Date.now();
     const token = await this.getToken();
     const res = await this.f(`${NH_BASE}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}`, ...(cts ? { cts, cts_flag: 'Y' } : {}) },
       body: JSON.stringify({ Input_0: input }),
     });
     // 토큰이 무효면 NH 는 401 또는 HTTP 400 + IGW40043("유효하지 않은 token") 으로 답한다
@@ -111,10 +141,11 @@ export class NhClient {
     if (invalidToken && !retried) {
       this.token = null;
       await this.getToken(true);
-      return this.call(path, input, true);
+      return this.request(path, input, cts, true);
     }
     if (!res.ok) throw new Error(`NH ${path} HTTP ${res.status}${body.rsp_msg ? ` ${s(body.rsp_msg)}` : ''}`);
-    return body;
+    const more = res.headers.get('cts_flag') === 'Y';
+    return { body, next: more ? s(res.headers.get('cts')) : '' };
   }
 }
 
@@ -161,9 +192,29 @@ export function mapGold(account: string, r: Json): { rows: HoldingRow[]; cash: n
   return { rows: items, cash };
 }
 
+/** 종합거래내역 → 배당 입금 (적요에 '배당' · '분배'가 든 입금: 외화배당금입금, 소수점해외배당금, 배당금입금 …) */
+export function mapDividends(account: string, txs: Json[], tickerByName: Map<string, string>): DividendRow[] {
+  return txs
+    .filter((t) => /배당|분배/.test(s(t.sps_cd_krl_anm)) && !/세|환급|출금/.test(s(t.sps_cd_krl_anm)) && n(t.trd_amt) > 0)
+    .map((t) => {
+      const d = s(t.trd_dt);
+      const name = s(t.iem_nm);
+      return {
+        date: `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`,
+        account,
+        code: tickerByName.get(name) ?? s(t.iem_cd),
+        name,
+        currency: s(t.cur_cd) === 'USD' ? 'USD' : 'KRW',
+        amount: Math.round(n(t.trd_amt) * 100) / 100,
+      } as DividendRow;
+    });
+}
+
+const ymd = (d: string) => d.replace(/-/g, '');
+
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
 
-export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[]): Promise<SyncResult> {
+export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[], dividendsFrom: string | null = null): Promise<SyncResult> {
   const nh = new NhClient(cfg);
   const warnings: string[] = [];
   const map = parseAccountMap(cfg.accounts);
@@ -171,6 +222,8 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   const live = rows(info, 'Output_0').filter((a) => s(a.acct_type) === '01' || s(a.acct_type) === '02');
   let usdKrw: number | null = null;
   const accounts: SyncAccount[] = [];
+  const dividends: DividendRow[] = [];
+  const today = new Date().toISOString().slice(0, 10);
 
   for (const { suffix, name } of map) {
     const acct = live.find((a) => s(a.acct_no).endsWith(suffix));
@@ -193,6 +246,18 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     const cash: CashRow[] = [{ account: name, currency: 'KRW', amount: k.cash ?? a.cash ?? 0 }];
     if (g.cashUsd) cash.push({ account: name, currency: 'USD', amount: g.cashUsd });
     accounts.push({ name, rows: [...k.rows, ...g.rows, ...a.rows], cash });
+
+    if (dividendsFrom) {
+      try {
+        const txs = await nh.callAll('/common/inquiry/v1/totalTransaction', {
+          iqr_tp_cd: '1', iqr_rge_cd: '1', act_no, iqr_sta_dt: ymd(dividendsFrom), iqr_end_dt: ymd(today), iem_llf_cd: '00', act_trd_dtl_cd: '00',
+        });
+        const tickerByName = new Map([...k.rows, ...g.rows].map((r) => [r.name, r.code]));
+        dividends.push(...mapDividends(name, txs, tickerByName));
+      } catch (e) {
+        warnings.push(`${name} 배당 내역: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   const prices: Record<string, number> = {};
@@ -214,5 +279,5 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     }
   }
 
-  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, warnings };
+  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends, dividendsFrom, warnings };
 }

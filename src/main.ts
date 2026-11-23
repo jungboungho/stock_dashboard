@@ -56,6 +56,7 @@ import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, type Instrument } from './data/instruments';
+import { dividendsFrom, mergeApiDividends, resolveCode } from './data/dividends';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -1210,15 +1211,23 @@ async function runSync() {
   }
   showNote('NH 계좌 잔고와 현재가를 가져오는 중…');
   try {
-    const res = await fetchSync(settings, excelBook.holdings, excelBook.holdings.syncedAccounts);
-    const before = excelBook.holdings;
-    const next = applySync(before, res);
+    const book = excelBook;
+    const res = await fetchSync(settings, book.holdings, book.holdings.syncedAccounts, dividendsFrom(book.dividends));
+    const next = applySync(book.holdings, res);
+    // NH 배당 입금: 받은 기간은 새 값으로, 직접 적은 기록은 그대로
+    let newDividends = 0;
+    if (res.dividends && res.dividendsFrom) {
+      const list = await loadInstruments(settings).catch((): Instrument[] => []);
+      const merged = mergeApiDividends(book.dividends, res.dividends, res.accounts.map((a) => a.name), res.dividendsFrom, res.usdKrw ?? bookUsdKrw(book), (d) => resolveCode(d, next, list));
+      book.dividends = merged.rows;
+      newDividends = merged.added;
+    }
     holdingsChanged(next);
     const apiNames = res.accounts.map((a) => a.name);
     const priced = new Set(next.rows.filter((r) => !apiNames.includes(r.account) && r.code && res.prices[r.code]).map((r) => r.code)).size;
     const accounts = res.accounts.map((a) => `${a.name} ${a.rows.length}종목`).join(', ');
     showNote(
-      `동기화했습니다 · ${accounts || 'NH 계좌 없음'} · 다른 계좌 현재가 ${priced}종목 반영${res.usdKrw ? ` · 환율 ${number(res.usdKrw)}원` : ''}.${res.warnings.length ? ` 확인 필요: ${res.warnings.join(' / ')}` : ''} 수정을 마치면 "③ 엑셀 업데이트"로 저장하세요.`,
+      `동기화했습니다 · ${accounts || 'NH 계좌 없음'} · 다른 계좌 현재가 ${priced}종목 반영${res.usdKrw ? ` · 환율 ${number(res.usdKrw)}원` : ''}${newDividends ? ` · 새 배당 ${newDividends}건` : ''}.${res.warnings.length ? ` 확인 필요: ${res.warnings.join(' / ')}` : ''} 수정을 마치면 "③ 엑셀 업데이트"로 저장하세요.`,
       res.warnings.length > 0,
     );
   } catch (ex) {
@@ -1533,6 +1542,7 @@ function renderDividendSection() {
   charts.div = renderDividends($<HTMLCanvasElement>('div-chart'), months, months.map((m) => byMonth.get(m) ?? 0), inRange, charts.div);
 
   const names = new Map(model.positions(allIds()).map((p) => [p.key, p.name]));
+  for (const t of txs) if (t.code && t.name && !names.has(t.code)) names.set(t.code, t.name); // 지금은 없는 종목의 배당
   const top = sum.byInstrument.slice(0, 6);
   const total = sum.byInstrument.reduce((s, r) => s + r.amount, 0) || 1;
   $('div-table').innerHTML = `<thead><tr><th>종목 (누적 상위)</th><th>횟수</th><th>누적 배당</th><th>비중</th></tr></thead>

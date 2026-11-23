@@ -5,6 +5,7 @@ import { accountTotals, holdingKey, rowCostKRW, rowValueKRW, type HoldingsState 
 import {
   CASH_CODE,
   DAILY_SHEET,
+  DIVIDEND_SHEET,
   GROUPS_SHEET,
   HOLDINGS_SHEET,
   MONTHLY_SHEET,
@@ -100,6 +101,14 @@ export function buildExportSheets(book: ExcelBook, groups: ExcelGroup[], today =
       renameFrom: OLD_SNAPSHOT_SHEET,
       widths: [11, 15, 15, 15, 9, ...accountCols.map(() => 14)],
       rows: [['날짜', '총자산(원)', '투자원금(원)', '수익금(원)', '수익률', ...accountCols], ...dailyRows],
+    },
+    {
+      name: DIVIDEND_SHEET,
+      widths: [11, 8, 14, 30, 6, 12, 12, 6],
+      rows: [
+        ['날짜', '계좌', '종목코드', '종목명', '통화', '금액', '원화금액', '출처'],
+        ...book.dividends.map((d) => [d.date, d.account, d.code, d.name, d.currency, d.amount, d.krw, d.source]),
+      ],
     },
     {
       name: MONTHLY_SHEET,

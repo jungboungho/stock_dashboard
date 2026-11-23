@@ -42,6 +42,8 @@ export interface Transaction {
   amountKRW: number;
   /** 매매·배당 시점 환율 (USD 종목만) */
   fxRate?: number;
+  /** 종목 이름 (배당 표시용, 알 때만) */
+  name?: string;
 }
 
 /** 일별 종가 (종목 통화 기준) */

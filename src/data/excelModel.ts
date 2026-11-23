@@ -1,6 +1,7 @@
 import type { DashboardData } from './model';
 import type { ExcelBook } from './excel/parse';
 import { accountTotals, cashByAccount, holdingsTotal, toPositions } from './holdings';
+import { toTransactions } from './dividends';
 import type { DailySnapshot, ISODate } from '../types';
 
 const monthEnd = (ym: string): ISODate => {
@@ -151,7 +152,9 @@ export function makeExcelModel(book: ExcelBook, today: ISODate = new Date().toIS
       { id: 'account', label: '계좌' },
       { id: 'currency', label: '통화' },
     ],
-    hasDividends: false,
+    get hasDividends() {
+      return book.dividends.length > 0;
+    },
     goal: book.goal,
     get usdKrw() {
       return bookUsdKrw(book);
@@ -159,7 +162,7 @@ export function makeExcelModel(book: ExcelBook, today: ISODate = new Date().toIS
     snapshots,
     positions: () => toPositions(book.holdings, bookUsdKrw(book)),
     cash: () => cashByAccount(book.holdings, bookUsdKrw(book)),
-    dividends: () => [],
+    dividends: () => toTransactions(book.dividends),
     yearStarts: book.yearStarts,
     deposits: book.deposits.length ? { accounts: book.depositAccounts, rows: book.deposits } : undefined,
     get trendAccounts() {

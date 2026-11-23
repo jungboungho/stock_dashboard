@@ -65,9 +65,10 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore,
       return json({ ok: true, accounts: parseAccountMap(env.NH_ACCOUNTS ?? '').map((a) => a.name) });
     }
     if (req.method === 'POST' && path === '/sync') {
-      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[] };
+      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[]; dividendsFrom?: string };
+      const dividendsFrom = /^\d{4}-\d{2}-\d{2}$/.test(body.dividendsFrom ?? '') ? body.dividendsFrom! : null;
       const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 60);
-      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes);
+      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes, dividendsFrom);
       return json(result);
     }
     if (path === '/instruments' && list) {
