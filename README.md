@@ -2,6 +2,28 @@
 
 계좌 자산을 가져와 포트폴리오를 분석하는 대시보드입니다. 오른쪽 위 **마이데이터 동기화** 메뉴로 내 데이터를 불러오며, 불러오기 전에는 샘플 데이터를 보여줍니다.
 
+## 내 계좌로 쓰기 (처음 한 번)
+
+각자 **자기 GitHub · 자기 Cloudflare · 자기 NH 앱키**로 따로 운영합니다. 앱키 · 시크릿은 자기 Cloudflare 비밀값에만 들어가고, 이 저장소 · 사이트 · 엑셀에는 들어가지 않습니다 (앱키가 있으면 주문까지 가능하므로 엑셀 · 브라우저에 두지 않음).
+
+1. **저장소 Fork** — GitHub 에서 Fork → 내 저장소 Settings → Pages → Source 를 **GitHub Actions** 로. Actions 탭에서 워크플로 실행을 허용하면 `https://<내 아이디>.github.io/<저장소 이름>/` 에 대시보드가 올라갑니다.
+2. **NH 앱키 발급** — [NH PLUG 포털](https://www.nhplug.com) (N2 고객은 n2plug.com) 에서 Open API 를 신청해 앱키 · 앱시크릿을 받습니다.
+3. **내 PC 준비** — Node.js 22 를 설치하고, Fork 한 저장소를 받아 `npm install`.
+4. **중계 서버 배포** — Cloudflare 에 무료 가입한 뒤:
+
+   ```powershell
+   npm run worker:setup
+   ```
+
+   - 브라우저로 Cloudflare 로그인 → 대시보드 주소(내 GitHub Pages) 확인 → 저장소(KV) 생성 → 배포 → NH 앱키 · 시크릿 입력(화면에 안 보임) → 접속 토큰 자동 생성 순서로 진행합니다.
+   - 처음이면 workers.dev 하위 도메인을 정하라는 안내가 나옵니다. 등록하고 다시 실행하면 이어서 진행합니다.
+   - 끝나면 엑셀 `설정` 시트에 넣을 **중계 서버 주소 · 접속 토큰**을 보여줍니다 (토큰은 `local-data/worker-token.txt`, git 제외).
+   - 바꾸지 않고 확인만: `npm run worker:setup -- --dry-run` · 토큰 새로 만들기: `npm run worker:setup -- --new-token`
+5. **엑셀 준비** — 대시보드 샘플 화면의 **엑셀 양식 내려받기**(`public/template.xlsx`, 숫자는 예시)를 받아 Summary · 입금내역을 내 값으로 채우고, `설정` 시트에 주소 · 토큰을 넣어 구글 드라이브 등에 둡니다. **이 엑셀은 다른 사람과 공유하지 마세요** (토큰으로 내 잔고를 조회할 수 있음).
+6. **사용** — 대시보드에서 ① 엑셀 불러오기 → ② 최신 정보 가져오기 → ③ 엑셀 업데이트. 첫 ③ 때 `설정` 시트에 `NH 계좌 ####` 줄이 생기면 B열에 대시보드 계좌 이름(입금내역 머리글과 같게, 예: `종합`)을 적고 다시 불러오면 그 계좌가 동기화됩니다.
+
+코드를 고친 뒤 중계 서버만 다시 올릴 때: `npm run worker:deploy`
+
 ## 사용 순서 (오른쪽 위 마이데이터 동기화 ▾)
 
 | 순서 | 메뉴 | 동작 |
@@ -99,18 +121,7 @@ copy proxy\.dev.vars.example proxy\.dev.vars   # CRED_FILE · NH_ACCOUNTS · PRO
 npm run proxy                                    # http://localhost:8787
 ```
 
-**Cloudflare Worker (휴대폰에서도 사용)**
-
-```powershell
-cd proxy
-npx wrangler login
-npx wrangler kv namespace create TOKENS          # 나온 id 를 wrangler.toml 에
-npx wrangler secret put NH_APP_KEY
-npx wrangler secret put NH_APP_SECRET
-npx wrangler secret put NH_ACCOUNTS              # 1234:종합,5678:금계좌
-npx wrangler secret put PROXY_TOKEN
-npx wrangler deploy
-```
+**Cloudflare Worker (휴대폰에서도 사용)** — `npm run worker:setup` (위 "내 계좌로 쓰기" 4번). `proxy/wrangler.toml` 은 각자 만드는 파일이라 git 에서 제외되고, 양식은 `proxy/wrangler.example.toml` 입니다. 비밀값: `NH_APP_KEY` · `NH_APP_SECRET` · `PROXY_TOKEN` (선택: `NH_ACCOUNTS` = `1234:종합,5678:금계좌` — 엑셀 `설정` 시트로 대신할 수 있음).
 
 배포 후 엑셀 `설정` 시트에 Worker 주소와 `PROXY_TOKEN` 을 적어 두면, 어느 기기든 엑셀을 불러올 때 동기화 설정이 채워집니다 (설정이 없을 때 ②를 누르면 입력 창이 뜹니다).
 ② 최신 정보 가져오기는 NH 가 응답하는 **모든 실계좌**를 확인합니다. 이름이 정해진 계좌(서버 `NH_ACCOUNTS` 또는 엑셀 `설정` 시트의 `NH 계좌 1234` 줄)는 잔고 · 배당을 최신으로 바꾸고, 이름이 없는 계좌는 반영하지 않고(엑셀 값 유지) 끝자리와 종목 수만 알려 줍니다. 지금 NH Open API 는 위탁 · 금현물 계좌만 응답해서 연금저축 · IRP · ISA 는 보유 종목 표나 사진으로 수정하고, 현재가만 자동으로 갱신됩니다.

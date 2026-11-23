@@ -44,3 +44,23 @@ describe("③ 엑셀 업데이트: '설정' 시트에 NH 계좌 줄", async () =
     expect(settingsWithNhAccounts({}, [{ suffix: '9999', name: null }])?.rows).toEqual([['항목', '값', '설명'], ['NH 계좌 9999', null, expect.stringContaining('B열')]]);
   });
 });
+
+describe('처음 쓰는 사람용 엑셀 양식 (public/template.xlsx)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { JSDOM } = await import('jsdom');
+  const { readWorkbook } = await import('../src/data/excel/xlsx');
+  const { parseStockBook } = await import('../src/data/excel/parse');
+  const { makeExcelModel } = await import('../src/data/excelModel');
+  globalThis.DOMParser = new JSDOM().window.DOMParser as unknown as typeof DOMParser;
+
+  it('대시보드가 그대로 읽고, 설정 시트는 비어 있다', () => {
+    const wb = readWorkbook(new Uint8Array(readFileSync('public/template.xlsx')));
+    const book = parseStockBook(wb, 'template.xlsx');
+    expect(book.depositAccounts).toEqual(['종합', 'ISA']);
+    expect(book.months.length).toBeGreaterThan(20);
+    expect(book.deposits.length).toBeGreaterThan(0);
+    expect(book.unit).toBe(10000);
+    expect(parseSyncSettings(wb)).toBeNull(); // 주소 · 토큰은 직접 넣음
+    expect(makeExcelModel(book, '2026-11-30').snapshots([]).length).toBeGreaterThan(20);
+  });
+});

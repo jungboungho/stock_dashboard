@@ -25,7 +25,8 @@ export interface ProxyEnv {
   ALLOWED_ORIGINS?: string;
 }
 
-const DEFAULT_ORIGINS = 'https://jungboungho.github.io,http://localhost:5173,http://localhost:5179';
+// 배포할 때 wrangler.toml 의 ALLOWED_ORIGINS 로 내 대시보드 주소를 넣는다 (없으면 로컬 개발 주소만)
+const DEFAULT_ORIGINS = 'http://localhost:5173,http://localhost:5179';
 
 function cors(req: Request, env: ProxyEnv): Record<string, string> {
   const origin = req.headers.get('Origin') ?? '';

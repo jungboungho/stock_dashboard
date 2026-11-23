@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc",
-    "proxy": "vite-node proxy/src/dev.ts"
+    "proxy": "vite-node proxy/src/dev.ts",
+    "worker:setup": "node proxy/setup.mjs",
+    "worker:deploy": "npx --yes wrangler@4 deploy --config proxy/wrangler.toml"
   },
   "dependencies": {
     "chart.js": "4.5.1",

@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { handle, type ListStore, type ProxyEnv } from '../proxy/src/handler';
 import type { TokenStore } from '../proxy/src/nh';
 
-const env: ProxyEnv = { NH_APP_KEY: 'k', NH_APP_SECRET: 's', NH_ACCOUNTS: '1234:종합', PROXY_TOKEN: 'secret\n' };
+const env: ProxyEnv = { NH_APP_KEY: 'k', NH_APP_SECRET: 's', NH_ACCOUNTS: '1234:종합', PROXY_TOKEN: 'secret\n', ALLOWED_ORIGINS: 'https://someone.github.io' };
 const tokens: TokenStore = { get: async () => null, set: async () => {} };
 const req = (method: string, path: string, body?: string, token = 'secret') =>
-  new Request(`https://proxy.test${path}`, { method, body, headers: { Authorization: `Bearer ${token}`, Origin: 'https://jungboungho.github.io' } });
+  new Request(`https://proxy.test${path}`, { method, body, headers: { Authorization: `Bearer ${token}`, Origin: 'https://someone.github.io' } });
 
 describe('중계 서버: 공유 종목 목록', () => {
   it('저장 전 404 → 형식 확인 → 저장 → 다른 기기가 같은 목록을 받는다', async () => {
@@ -17,7 +17,7 @@ describe('중계 서버: 공유 종목 목록', () => {
     const put = await handle(req('PUT', '/instruments', body), env, tokens, list);
     expect(put.status).toBe(200);
     const got = await handle(req('GET', '/instruments'), env, tokens, list);
-    expect(got.headers.get('Access-Control-Allow-Origin')).toBe('https://jungboungho.github.io');
+    expect(got.headers.get('Access-Control-Allow-Origin')).toBe('https://someone.github.io');
     expect(await got.json()).toEqual(JSON.parse(body));
   });
 
@@ -25,7 +25,7 @@ describe('중계 서버: 공유 종목 목록', () => {
     const list: ListStore = { get: async () => '{}', put: async () => {} };
     expect((await handle(req('GET', '/instruments', undefined, 'wrong'), env, tokens, list)).status).toBe(401);
     expect((await handle(req('PUT', '/instruments', '{}', 'wrong'), env, tokens, list)).status).toBe(401);
-    const pre = await handle(new Request('https://proxy.test/instruments', { method: 'OPTIONS', headers: { Origin: 'https://jungboungho.github.io' } }), env, tokens, list);
+    const pre = await handle(new Request('https://proxy.test/instruments', { method: 'OPTIONS', headers: { Origin: 'https://someone.github.io' } }), env, tokens, list);
     expect(pre.headers.get('Access-Control-Allow-Methods')).toContain('PUT');
   });
 });
@@ -77,5 +77,16 @@ describe('중계 서버: NH 가 응답하는 모든 계좌', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('중계 서버: 허용 출처', () => {
+  it('ALLOWED_ORIGINS 에 없는 사이트에는 CORS 헤더를 주지 않는다 (기본은 로컬 개발 주소만)', async () => {
+    const list: ListStore = { get: async () => '{}', put: async () => {} };
+    const ask = (origin: string, e: ProxyEnv) => handle(new Request('https://proxy.test/instruments', { method: 'OPTIONS', headers: { Origin: origin } }), e, tokens, list);
+    expect((await ask('https://other.github.io', env)).headers.get('Access-Control-Allow-Origin')).toBeNull();
+    const noVar = { ...env, ALLOWED_ORIGINS: undefined };
+    expect((await ask('https://someone.github.io', noVar)).headers.get('Access-Control-Allow-Origin')).toBeNull();
+    expect((await ask('http://localhost:5173', noVar)).headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
   });
 });

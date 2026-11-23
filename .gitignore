@@ -13,3 +13,5 @@ __pycache__/
 proxy/.dev.vars
 .wrangler/
 *.traineddata
+proxy/wrangler.toml
+!public/template.xlsx

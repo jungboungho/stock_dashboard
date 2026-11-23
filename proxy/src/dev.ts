@@ -7,7 +7,7 @@ import { handle, type ProxyEnv } from './handler';
 //   npm run proxy
 // 설정은 proxy/.dev.vars (git 제외) 에서 읽는다:
 //   CRED_FILE=C:/내/경로/credential.txt   (또는 NH_APP_KEY / NH_APP_SECRET)
-//   NH_ACCOUNTS=1234:종합,5678:금계좌
+//   NH_ACCOUNTS=1234:종합,5678:금계좌   (선택 — 엑셀 '설정' 시트의 'NH 계좌 1234' 줄로도 정할 수 있음)
 //   PROXY_TOKEN=아무도_모르는_긴_문자열
 // 접근토큰은 local-data/nh_token.json 에 저장해 24시간 재사용한다.
 
@@ -33,8 +33,8 @@ if ((!appKey || !appSecret) && get('CRED_FILE')) {
   }
 }
 const env: ProxyEnv = { NH_APP_KEY: appKey, NH_APP_SECRET: appSecret, NH_ACCOUNTS: get('NH_ACCOUNTS'), PROXY_TOKEN: get('PROXY_TOKEN'), ALLOWED_ORIGINS: get('ALLOWED_ORIGINS') || undefined };
-if (!env.NH_APP_KEY || !env.NH_APP_SECRET || !env.PROXY_TOKEN || !env.NH_ACCOUNTS) {
-  console.error('proxy/.dev.vars 에 CRED_FILE(또는 NH_APP_KEY/NH_APP_SECRET), NH_ACCOUNTS, PROXY_TOKEN 을 넣으세요.');
+if (!env.NH_APP_KEY || !env.NH_APP_SECRET || !env.PROXY_TOKEN) {
+  console.error('proxy/.dev.vars 에 CRED_FILE(또는 NH_APP_KEY/NH_APP_SECRET), PROXY_TOKEN 을 넣으세요.');
   process.exit(1);
 }
 
@@ -64,4 +64,4 @@ createServer(async (req, res) => {
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
   console.log(new Date().toISOString().slice(11, 19), req.method, req.url, response.status);
-}).listen(port, () => console.log(`중계 서버: http://localhost:${port}  (계좌: ${env.NH_ACCOUNTS.split(',').map((a) => a.split(':')[1]).join(', ')})`));
+}).listen(port, () => console.log(`중계 서버: http://localhost:${port}  (서버 계좌 매핑: ${env.NH_ACCOUNTS || '없음 — 엑셀 설정 시트 사용'})`));

@@ -586,7 +586,11 @@ function buildSourceControls() {
   }
 
   if (model.source === 'dummy') {
-    showNote('샘플 데이터입니다. 오른쪽 위 "마이데이터 동기화 → ① 엑셀 불러오기"로 내 데이터를 불러오면 실제 값으로 바뀝니다.');
+    showNote(
+      `샘플 데이터입니다. 오른쪽 위 "마이데이터 동기화 → ① 엑셀 불러오기"로 내 데이터를 불러오면 실제 값으로 바뀝니다. 처음이라면 <a href="${import.meta.env.BASE_URL}template.xlsx" download>엑셀 양식 내려받기</a>`,
+      false,
+      true,
+    );
   } else {
     $('source-note').hidden = true;
   }
