@@ -24,7 +24,7 @@
 투자내역 시트는 최신이 아니어서 읽지 않습니다. 보유 종목 · 현재가는 마이데이터 동기화로 채우고, 그 전에는 그룹별 비중의 **+ 종목 직접 추가**로 입력할 수 있습니다.
 표는 셀 위치가 아니라 머리글('년도', '날짜', '기말자산' …)로 찾으므로 행이 늘어나도 그대로 동작합니다.
 
-배포: Claude 아티팩트(비공개, 본인 claude.ai 계정에서만 열림) — https://claude.ai/artifact/TLeF9iKNxx1ne9A1szQDR2
+배포 주소: https://jungboungho.github.io/stock_dashboard/
 
 ## 화면 구성
 
@@ -92,12 +92,14 @@ tests/                vitest
 npm install
 npm run dev             # http://localhost:5173/
 npm test
-npm run build:artifact  # dist/artifact.html + dist/assets/* (아티팩트 게시용)
+npm run build
 ```
 
-저장소가 비공개라 GitHub Pages 대신 Claude 아티팩트로 게시합니다.
-`npm run build:artifact` 로 만든 `dist/artifact.html` 을 페이지로, `dist/assets/*` 를 같은 경로의 파일로 같은 아티팩트 주소에 다시 게시하면 반영됩니다
-(아티팩트가 `<!doctype>`/`<head>` 골격을 직접 씌우므로 `scripts/artifact.mjs` 가 그 부분을 빼 줍니다. 글꼴은 아티팩트가 허용하는 Google Fonts 의 IBM Plex Sans KR).
-push하면 GitHub Actions(CI)가 테스트와 빌드만 확인합니다. 엑셀 값과 그룹 설정은 각 브라우저에만 저장되며 다시 게시해도 유지됩니다.
+`main` 브랜치에 push하면 GitHub Actions가 테스트 → 빌드 → Pages 배포를 진행합니다 (저장소 Settings → Pages → Source = GitHub Actions).
+공개 저장소이지만 코드와 샘플 데이터만 올라갑니다. 실제 값은 `*.xlsx` 를 git에서 제외하고, 엑셀은 각 브라우저 안에서만 읽어 그 브라우저에 저장합니다.
+
+### 여러 기기에서 보기
+`주식.xlsx` 를 구글 드라이브에 두고, 각 기기(PC · 휴대폰)에서 **마이데이터 동기화 ▾ → 엑셀 파일로 업데이트** 로 드라이브의 파일을 한 번 고르면 됩니다.
+엑셀을 고친 뒤에는 같은 메뉴로 다시 불러옵니다. 그룹 설정은 기기마다 따로 저장됩니다.
 
 > 더미 데이터의 종목 이름만 실제이고 가격 · 거래 · 배당은 모두 임의 값입니다.

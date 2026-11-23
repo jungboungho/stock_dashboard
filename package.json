@@ -8,8 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc",
-    "build:artifact": "npm run build && node scripts/artifact.mjs"
+    "typecheck": "tsc"
   },
   "dependencies": {
     "chart.js": "4.5.1",
