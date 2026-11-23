@@ -10,3 +10,5 @@ credential*.txt
 .env
 .env.*
 __pycache__/
+proxy/.dev.vars
+.wrangler/

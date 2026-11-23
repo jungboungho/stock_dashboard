@@ -1,0 +1,4 @@
+# proxy/.dev.vars 로 복사해서 쓰세요 (git 제외 파일)
+CRED_FILE=C:/내/경로/credential.txt
+NH_ACCOUNTS=1234:종합,5678:금계좌
+PROXY_TOKEN=여기에_긴_무작위_문자열

@@ -1,15 +1,17 @@
 import type { SheetCells, Workbook } from './xlsx';
 import type { YearStart } from '../model';
-import type { ISODate } from '../../types';
+import type { Currency, ISODate } from '../../types';
+import { emptyHoldings, holdingKey, type HoldingsState } from '../holdings';
 
 /**
  * 사용자가 관리하던 '주식.xlsx' 구조를 읽어 앱 데이터로 바꾼다.
  *
  * Summary        : 계좌별 원금 · 목표 · 단위, 년도 표(연초 총자산 · 연중 변경), 월별 표(계좌별 입금 · 기말자산)
  * 입금내역        : 날짜별 · 계좌별 입금 (음수 = 출금 · 계좌 간 이체)
- * 해외주식리스트   : 환율 (직접 추가한 달러 종목 환산에만 사용)
+ * 해외주식리스트   : 환율
+ * 보유종목 · 그룹 · 자산스냅샷 : 대시보드의 '엑셀 업데이트'가 쓰는 시트 (계좌별 보유 종목 · 내 그룹 · 날짜별 계좌 평가금)
  *
- * 투자내역 시트는 최신이 아니어서 읽지 않는다 (보유 종목은 마이데이터 동기화로 채움).
+ * 투자내역 시트는 최신이 아니어서 읽지 않는다.
  * 셀 위치가 아니라 머리글 글자('년도', '날짜', '기말자산' ...)로 표를 찾으므로 행이 늘어나도 동작한다.
  */
 
@@ -27,8 +29,20 @@ export interface ExcelMonth {
   endValue: number | null;
 }
 
+export interface ExcelGroup {
+  name: string;
+  /** 종목 키 (종목코드, 없으면 종목명) */
+  keys: string[];
+}
+
+export interface SnapshotLogRow {
+  date: ISODate;
+  account: string;
+  value: number;
+}
+
 export interface ExcelBook {
-  version: 2;
+  version: 3;
   fileName: string;
   importedAt: string;
   unit: number;
@@ -40,7 +54,22 @@ export interface ExcelBook {
   /** 입금내역 머리글 (종합 · ISA · 금계좌 · 연금1 · 연금2 · IRP ...) */
   depositAccounts: string[];
   deposits: ExcelDeposit[];
+  holdings: HoldingsState;
+  groups: ExcelGroup[];
+  snapshotLog: SnapshotLogRow[];
 }
+
+/** 예전(v2)에 저장된 값도 읽는다 */
+export function upgradeBook(raw: unknown): ExcelBook | null {
+  const b = raw as Omit<Partial<ExcelBook>, 'version'> & { version?: number };
+  if (!b || (b.version !== 2 && b.version !== 3)) return null;
+  return { ...(b as unknown as ExcelBook), version: 3, holdings: b.holdings ?? emptyHoldings(), groups: b.groups ?? [], snapshotLog: b.snapshotLog ?? [] };
+}
+
+export const HOLDINGS_SHEET = '보유종목';
+export const GROUPS_SHEET = '그룹';
+export const SNAPSHOT_SHEET = '자산스냅샷';
+export const CASH_CODE = '현금';
 
 // ─── 셀 도우미 ────────────────────────────────────────────────
 
@@ -231,5 +260,93 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
     }
   }
 
-  return { version: 2, fileName, importedAt: new Date().toISOString(), unit, goal, usdKrw, accounts, yearStarts, months, depositAccounts, deposits };
+  const holdings = parseHoldings(book);
+  return {
+    version: 3,
+    fileName,
+    importedAt: new Date().toISOString(),
+    unit,
+    goal,
+    usdKrw: holdings.usdKrw ?? usdKrw,
+    accounts,
+    yearStarts,
+    months,
+    depositAccounts,
+    deposits,
+    holdings,
+    groups: parseGroups(book),
+    snapshotLog: parseSnapshotLog(book),
+  };
+}
+
+/** 머리글 행(필수 글자를 모두 가진 첫 행)을 찾아 행마다 {머리글: 값} 으로 */
+function table(cells: SheetCells | undefined, required: string[]): Record<string, string | number | undefined>[] {
+  if (!cells) return [];
+  const g = grid(cells);
+  const header = findRow(g, (r) => {
+    const h = headerMap(g, r);
+    return required.every((k) => h.has(k));
+  });
+  if (header === undefined) return [];
+  const h = headerMap(g, header);
+  return g.rows
+    .filter((r) => r > header)
+    .map((r) => Object.fromEntries([...h].map(([k, c]) => [k, g.get(c, r)])));
+}
+
+const currencyOf = (v: unknown): Currency => (str(v).toUpperCase() === 'USD' || str(v) === '달러' ? 'USD' : 'KRW');
+
+export function parseHoldings(book: Workbook): HoldingsState {
+  const h = emptyHoldings();
+  for (const r of table(findSheet(book, HOLDINGS_SHEET), ['계좌', '종목명', '수량'])) {
+    const account = str(r['계좌']);
+    const name = str(r['종목명']);
+    const code = str(r['종목코드']);
+    const qty = num(r['수량']);
+    if (!account || !name || qty === undefined) continue;
+    const date = toDate(r['기준일']);
+    if (date && !h.asOf) h.asOf = `${date}T00:00:00`;
+    const rate = num(r['환율']);
+    if (rate && !h.usdKrw) h.usdKrw = rate;
+    const currency = currencyOf(r['통화']);
+    if (code === CASH_CODE || name === CASH_CODE) {
+      h.cash.push({ account, currency, amount: qty });
+      continue;
+    }
+    h.rows.push({
+      account,
+      code: code.toUpperCase(),
+      name,
+      currency,
+      quantity: qty,
+      avgPrice: num(r['평균단가']) ?? 0,
+      price: num(r['현재가']) ?? null,
+      costKRW: num(r['매입금액(원)']) ?? null,
+    });
+  }
+  return h;
+}
+
+export function parseGroups(book: Workbook): ExcelGroup[] {
+  const out: ExcelGroup[] = [];
+  for (const r of table(findSheet(book, GROUPS_SHEET), ['그룹'])) {
+    const name = str(r['그룹']);
+    if (!name) continue;
+    let g = out.find((x) => x.name === name);
+    if (!g) out.push((g = { name, keys: [] }));
+    const key = holdingKey({ code: str(r['종목코드']), name: str(r['종목명']) });
+    if (key && !g.keys.includes(key)) g.keys.push(key);
+  }
+  return out;
+}
+
+export function parseSnapshotLog(book: Workbook): SnapshotLogRow[] {
+  const out: SnapshotLogRow[] = [];
+  for (const r of table(findSheet(book, SNAPSHOT_SHEET), ['기준일', '계좌', '평가금액(원)'])) {
+    const date = toDate(r['기준일']);
+    const value = num(r['평가금액(원)']);
+    const account = str(r['계좌']);
+    if (date && account && value !== undefined) out.push({ date, account, value });
+  }
+  return out;
 }

@@ -3,7 +3,7 @@
 토큰 발급 → 계좌 목록 → 계좌별 국내주식·해외주식·금현물 잔고, 최근 1년 입출금 건수를 조회하고
 '어떤 계좌가 잡히는지 / 응답이 오는지'만 출력한다. 금액·키 값은 출력하지 않는다.
 
-    python tools/nh_probe.py "D:/GoogleDriveLocal/문서/credential.txt"
+    python tools/nh_probe.py "C:/내/경로/credential.txt"
 
 - 접근토큰은 local-data/nh_token.json 에 저장해 24시간 재사용한다 (재발급하면 NH 보안 알림이 감).
 - 주문 API 는 호출하지 않는다.

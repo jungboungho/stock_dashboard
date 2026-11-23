@@ -1,0 +1,14 @@
+# Cloudflare Worker — NH 투자증권 Open API 중계 서버 (조회 전용)
+# 비밀값은 여기에 쓰지 말고 `npx wrangler secret put <이름>` 으로 넣는다:
+#   NH_APP_KEY, NH_APP_SECRET, PROXY_TOKEN, NH_ACCOUNTS ("1234:종합,5678:금계좌")
+name = "stock-dashboard-proxy"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://jungboungho.github.io,http://localhost:5173,http://localhost:5179"
+
+# 접근토큰 24시간 캐시용 KV. `npx wrangler kv namespace create TOKENS` 로 만든 id 를 넣는다.
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "REPLACE_WITH_KV_ID"

@@ -1,26 +1,66 @@
-import type { DashboardData } from './model';
-import { MyDataProvider } from './mydata';
-import { loadPortfolio } from './provider';
-import { makePortfolioModel } from './dummyModel';
+import type { HoldingsState, SyncResult } from './holdings';
+import { quoteTargets } from './holdings';
 
 /**
- * 마이데이터 동기화.
- * 마이데이터 접근토큰은 브라우저에 둘 수 없으므로, 토큰을 가진 중계 서버 주소를
- * 빌드 환경변수 VITE_MYDATA_PROXY_URL 로 넣는다. 주소가 없으면 '준비 중' 상태.
+ * 마이데이터 동기화 (NH 투자증권 Open API 중계 서버).
+ * 앱키 · 시크릿은 중계 서버에만 있고, 브라우저는 중계 서버 주소와 접속 토큰만 안다.
+ * 주소 · 토큰은 이 브라우저에만 저장한다 (공개 저장소 · 사이트에는 넣지 않음).
  */
-export interface MyDataStatus {
-  configured: boolean;
-  endpoint?: string;
+export interface SyncSettings {
+  url: string;
+  token: string;
 }
 
-export function mydataStatus(): MyDataStatus {
-  const endpoint = (import.meta.env.VITE_MYDATA_PROXY_URL as string | undefined)?.trim();
-  return endpoint ? { configured: true, endpoint } : { configured: false };
+const KEY = 'stock-dashboard:sync:v1';
+
+export function loadSyncSettings(): SyncSettings | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as SyncSettings | null;
+    if (s?.url && s.token) return s;
+  } catch {
+    /* 무시 */
+  }
+  const url = (import.meta.env.VITE_MYDATA_PROXY_URL as string | undefined)?.trim();
+  return url ? { url, token: '' } : null;
 }
 
-export async function syncMyData(): Promise<DashboardData> {
-  const status = mydataStatus();
-  if (!status.configured) throw new Error('마이데이터 중계 서버가 아직 연결되지 않았습니다.');
-  const data = await loadPortfolio(new MyDataProvider(status.endpoint!));
-  return makePortfolioModel(data, { source: 'mydata', sourceLabel: '마이데이터', updatedAt: new Date().toISOString() });
+export function saveSyncSettings(s: SyncSettings | null): void {
+  try {
+    if (s) localStorage.setItem(KEY, JSON.stringify(s));
+    else localStorage.removeItem(KEY);
+  } catch {
+    /* 무시 */
+  }
+}
+
+export function normalizeUrl(url: string): string {
+  const u = url.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/]+/.test(u)) throw new Error('주소는 https:// 로 시작해야 합니다');
+  return u;
+}
+
+async function request<T>(s: SyncSettings, path: string, body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${s.url}${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('중계 서버에 연결하지 못했습니다. 주소와 인터넷 연결을 확인하세요.');
+  }
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (res.status === 401) throw new Error('접속 토큰이 맞지 않습니다.');
+  if (!res.ok) throw new Error(data.error ?? `중계 서버 오류 (${res.status})`);
+  return data;
+}
+
+export async function checkProxy(s: SyncSettings): Promise<{ accounts: string[] }> {
+  return request(s, '/health');
+}
+
+/** NH 계좌 잔고 + 나머지 계좌 종목의 현재가 */
+export async function fetchSync(s: SyncSettings, h: HoldingsState, apiAccounts: string[]): Promise<SyncResult> {
+  return request<SyncResult>(s, '/sync', { quotes: quoteTargets(h, apiAccounts) });
 }

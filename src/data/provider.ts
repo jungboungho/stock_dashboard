@@ -3,7 +3,7 @@ import type { Account, FxSeries, Instrument, PriceSeries, Transaction } from '..
 /**
  * 화면은 이 인터페이스만 사용한다.
  * - DummyProvider : 고정 seed 로 만든 가상 데이터 (현재 사용)
- * - MyDataProvider : 마이데이터 API 연동 (예정)
+ * (실제 계좌는 엑셀 + NH Open API 중계 서버 → data/holdings · data/sync)
  */
 export interface DataProvider {
   readonly name: string;

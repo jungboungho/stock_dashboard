@@ -2,7 +2,7 @@ import type { DashboardData, Position } from './model';
 import type { PortfolioData } from './provider';
 import { computeHoldings, computeSnapshots } from '../domain/portfolio';
 
-/** 마이데이터 연동 시: makePortfolioModel(await loadPortfolio(new MyDataProvider(url)), { source: 'mydata', ... }) */
+/** 거래내역 + 일별 시세 → 화면 데이터 (샘플 데이터용) */
 export function makeDummyModel(data: PortfolioData): DashboardData {
   return makePortfolioModel(data, { source: 'dummy', sourceLabel: '샘플 데이터' });
 }

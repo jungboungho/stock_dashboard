@@ -2,27 +2,34 @@
 
 계좌 자산을 가져와 포트폴리오를 분석하는 대시보드입니다. 오른쪽 위 **마이데이터 동기화** 메뉴로 내 데이터를 불러오며, 불러오기 전에는 샘플 데이터를 보여줍니다.
 
-## 마이데이터 동기화 메뉴
+## 사용 순서 (오른쪽 위 마이데이터 동기화 ▾)
 
-| 메뉴 | 동작 |
-| --- | --- |
-| 최신 정보 가져오기 | 마이데이터 중계 서버에서 계좌 · 보유 종목 · 현재가 · 입출금을 가져와 화면을 바꿈. 빌드 환경변수 `VITE_MYDATA_PROXY_URL` 이 없으면 '준비 중' 안내 |
-| 엑셀 파일로 업데이트 | 마이데이터 연결 전 임시. `주식.xlsx` 를 **브라우저 안에서만** 읽음 (서버로 보내지 않음) |
-| 불러온 데이터 지우기 | 이 브라우저에 저장된 내 데이터와 그룹 설정 삭제 |
+| 순서 | 메뉴 | 동작 |
+| --- | --- | --- |
+| ① | 엑셀 불러오기 | `주식.xlsx` 를 **브라우저 안에서만** 읽음 (Summary · 입금내역 · 보유종목 · 그룹 · 자산스냅샷) |
+| ② | 최신 정보 가져오기 | 중계 서버 → NH 투자증권 Open API: 종합 · 금계좌 잔고를 통째로 받고, 나머지 계좌(ISA · 연금 · IRP) 종목은 **현재가만** 갱신 |
+| - | (편집) | 보유 종목 표에서 계좌별로 종목 · 수량 · 매입금액 · 현금 수정, 그룹별 비중에서 그룹 만들기 · 종목 배정 |
+| ③ | 엑셀 업데이트 | 원본 엑셀의 다른 시트는 그대로 두고 `보유종목` · `그룹` · `자산스냅샷` 시트만 새로 씀. PC 크롬 · 엣지는 고른 파일에 바로 저장, 그 외(휴대폰 등)는 파일을 내려받음 |
+| - | 동기화 설정 | 중계 서버 주소 · 접속 토큰 (이 브라우저에만 저장) |
+| - | 불러온 데이터 지우기 | 이 브라우저에 저장된 내 데이터 · 그룹 설정 삭제 |
 
-- 불러온 값과 그룹 설정은 그 브라우저의 localStorage 에만 저장됩니다. 저장소에는 개인 데이터를 넣지 않습니다 (`*.xlsx` 는 `.gitignore`).
-- 그룹 설정은 '내 데이터' 기준으로 저장되어, 엑셀 → 마이데이터로 바뀌어도 유지됩니다.
+- 내 데이터의 그룹은 엑셀 `그룹` 시트에서 시작하고, 샘플 데이터의 그룹과 따로 저장됩니다.
+- 앞으로 엑셀에는 `입금내역` 만 채우면 되고, 보유 종목 · 그룹 목록은 ③ 엑셀 업데이트가 채웁니다.
+- 저장소에는 개인 데이터를 넣지 않습니다 (`*.xlsx`, `credential*.txt`, `proxy/.dev.vars`, `local-data/` 는 `.gitignore`).
 
-### 엑셀에서 읽는 시트
+### 엑셀 시트
 
-| 시트 | 읽는 내용 |
+| 시트 | 내용 |
 | --- | --- |
 | Summary | 계좌별 원금 · 목표 · 단위(만원), 년도 표(연초 총자산 · 연중 변경), 월별 표(계좌별 입금 · 기말자산) |
 | 입금내역 | 날짜별 · 계좌별 입금 (음수 = 출금 · 계좌 간 이체) → 계좌별 입금 화면 |
-| 해외주식리스트 | 환율 (직접 추가한 달러 종목 환산) |
+| 해외주식리스트 | 환율 (보유종목에 환율이 없을 때) |
+| 보유종목 *(대시보드가 씀)* | 기준일 · 계좌 · 종목코드 · 종목명 · 통화 · 수량 · 평균단가 · 현재가 · 환율 · 매입금액 · 평가금액 · 평가손익 · 그룹. 종목코드 `현금` 줄은 계좌 현금 |
+| 그룹 *(대시보드가 씀)* | 그룹 · 종목코드 · 종목명 (그룹마다 여러 줄) |
+| 자산스냅샷 *(대시보드가 씀)* | 기준일 · 계좌 · 평가금액 — 업데이트할 때마다 그날 값이 쌓임 |
 
-투자내역 시트는 최신이 아니어서 읽지 않습니다. 보유 종목 · 현재가는 마이데이터 동기화로 채우고, 그 전에는 그룹별 비중의 **+ 종목 직접 추가**로 입력할 수 있습니다.
-표는 셀 위치가 아니라 머리글('년도', '날짜', '기말자산' …)로 찾으므로 행이 늘어나도 그대로 동작합니다.
+투자내역 시트는 최신이 아니어서 읽지 않습니다. 보유종목이 있으면 그 합계가 이번 달의 총자산이 됩니다 (Summary 기말자산 대신).
+표는 셀 위치가 아니라 머리글로 찾으므로 행이 늘어나도 그대로 동작합니다.
 
 배포 주소: https://jungboungho.github.io/stock_dashboard/
 
@@ -60,31 +67,49 @@
 
 ```
 src/
-  types.ts            도메인 타입 (Account, Instrument, Transaction, PriceSeries ...)
-  data/provider.ts    DataProvider 인터페이스 — 화면은 이것만 사용
-  data/dummy.ts       고정 seed 더미 데이터 (계좌 3개, 종목 13개, 2024-01 ~ 2026-11)
-  data/mydata.ts      마이데이터 연동 자리 (중계 서버 호출)
-  data/model.ts       화면용 데이터 모델 (DashboardData) — 출처마다 어댑터가 만든다
-  data/dummyModel.ts  거래내역 + 시세 → DashboardData (샘플 · 마이데이터 공용 makePortfolioModel)
-  data/excel/         xlsx 읽기(xlsx.ts) · 주식.xlsx 해석(parse.ts: Summary · 입금내역)
-  data/excelModel.ts  엑셀 → DashboardData (월별 스냅샷 · 계좌별 입금)
-  data/sync.ts        마이데이터 동기화 (중계 서버 → makePortfolioModel)
-  domain/groups.ts    사용자 그룹 · 종목 CRUD, 그룹별 비중
-  domain/yearly.ts    연도별 연초대비 수익률
-  ui/dialog.ts        입력 대화상자
-  domain/portfolio.ts 스냅샷 · 보유종목 · 그룹 · 기간 · 배당 계산
-  domain/period.ts    기간 프리셋 · 비교 기간
-  ui/charts.ts        Chart.js 차트
+  data/holdings.ts    계좌별 보유 종목 · 현금, 편집 · 동기화 병합
+  data/excel/         xlsx 읽기(xlsx.ts) · 해석(parse.ts) · 시트 쓰기(write.ts) · 내보낼 시트 구성(export.ts)
+  data/excelModel.ts  엑셀 → 화면 데이터 (월별 스냅샷 + 보유종목 합계)
+  data/sync.ts        중계 서버 호출 (주소 · 토큰은 브라우저에만)
+  data/dummy*.ts      샘플 데이터
+  domain/             그룹 CRUD · 기간 · 연도별 수익률 · 포트폴리오 계산
+  ui/                 차트 · 대화상자
   main.ts             화면 조립
+proxy/                NH 투자증권 Open API 중계 서버 (조회 전용, 주문 API 없음)
+  src/nh.ts           토큰 캐시(24시간) · 초당 5건 제한 · 잔고 / 현재가 → 대시보드 형식
+  src/handler.ts      /health · /sync, 접속 토큰 확인, CORS
+  src/worker.ts       Cloudflare Worker 진입점
+  src/dev.ts          내 PC에서 돌리는 개발 서버 (npm run proxy)
+tools/nh_probe.py     NH 연결 확인 스크립트 (값은 출력하지 않음)
 tests/                vitest
 ```
 
-## 마이데이터 연결 계획
+## 중계 서버 (NH 투자증권 Open API)
 
-1. 마이데이터 접근토큰은 브라우저에 둘 수 없으므로 토큰을 보관하고 API를 대신 호출하는 **중계 서버**를 둔다.
-2. 중계 서버가 계좌 목록 · 보유 상품 · 거래내역 응답을 `types.ts` 형태로 변환해 돌려준다.
-3. 마이데이터는 과거 일별 시세를 주지 않으므로, 자산추이용 가격은 시세 API를 쓰거나 매일 평가 스냅샷을 저장해 채운다.
-4. 빌드 환경변수 `VITE_MYDATA_PROXY_URL` 에 중계 서버 주소를 넣으면 '마이데이터 동기화 → 최신 정보 가져오기'가 활성화된다 (`src/data/sync.ts`).
+앱키 · 시크릿은 브라우저나 공개 저장소에 둘 수 없어서 중계 서버에만 둡니다. 브라우저는 서버 주소와 접속 토큰만 압니다.
+
+**내 PC에서 (개발 · 확인)**
+
+```powershell
+copy proxy\.dev.vars.example proxy\.dev.vars   # CRED_FILE · NH_ACCOUNTS · PROXY_TOKEN 입력
+npm run proxy                                    # http://localhost:8787
+```
+
+**Cloudflare Worker (휴대폰에서도 사용)**
+
+```powershell
+cd proxy
+npx wrangler login
+npx wrangler kv namespace create TOKENS          # 나온 id 를 wrangler.toml 에
+npx wrangler secret put NH_APP_KEY
+npx wrangler secret put NH_APP_SECRET
+npx wrangler secret put NH_ACCOUNTS              # 1234:종합,5678:금계좌
+npx wrangler secret put PROXY_TOKEN
+npx wrangler deploy
+```
+
+배포 후 대시보드 **동기화 설정**에 Worker 주소와 `PROXY_TOKEN` 을 넣습니다.
+연금저축 · IRP · ISA 는 NH Open API 가 지원하지 않아 보유 종목 표에서 직접 수정하고, 현재가만 자동으로 갱신됩니다.
 
 ## 개발
 
@@ -99,7 +124,7 @@ npm run build
 공개 저장소이지만 코드와 샘플 데이터만 올라갑니다. 실제 값은 `*.xlsx` 를 git에서 제외하고, 엑셀은 각 브라우저 안에서만 읽어 그 브라우저에 저장합니다.
 
 ### 여러 기기에서 보기
-`주식.xlsx` 를 구글 드라이브에 두고, 각 기기(PC · 휴대폰)에서 **마이데이터 동기화 ▾ → 엑셀 파일로 업데이트** 로 드라이브의 파일을 한 번 고르면 됩니다.
-엑셀을 고친 뒤에는 같은 메뉴로 다시 불러옵니다. 그룹 설정은 기기마다 따로 저장됩니다.
+`주식.xlsx` 를 구글 드라이브에 두고, 각 기기(PC · 휴대폰)에서 **① 엑셀 불러오기** 로 드라이브의 파일을 고르면 됩니다.
+③ 엑셀 업데이트로 보유종목 · 그룹을 엑셀에 저장해 두면 다른 기기에서도 같은 구성으로 불러옵니다.
 
 > 더미 데이터의 종목 이름만 실제이고 가격 · 거래 · 배당은 모두 임의 값입니다.

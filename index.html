@@ -22,13 +22,21 @@
               <span aria-hidden="true">⟳</span> 마이데이터 동기화 <span class="caret-down" aria-hidden="true">▾</span>
             </button>
             <div class="menu" id="sync-menu" role="menu" hidden>
-              <button type="button" role="menuitem" id="menu-sync">
-                <span>최신 정보 가져오기</span>
-                <small id="sync-state">계좌 · 보유 종목 · 현재가 · 입출금</small>
-              </button>
               <button type="button" role="menuitem" id="menu-excel">
-                <span>엑셀 파일로 업데이트</span>
-                <small>마이데이터 연결 전 임시 · 파일은 브라우저 안에서만 읽음</small>
+                <span>① 엑셀 불러오기</span>
+                <small>Summary · 입금내역 · 보유종목 · 그룹 (브라우저 안에서만 읽음)</small>
+              </button>
+              <button type="button" role="menuitem" id="menu-sync">
+                <span>② 최신 정보 가져오기</span>
+                <small id="sync-state">NH 계좌 잔고 · 모든 종목 현재가</small>
+              </button>
+              <button type="button" role="menuitem" id="menu-export">
+                <span>③ 엑셀 업데이트</span>
+                <small id="export-state">보유종목 · 그룹 · 자산스냅샷 시트에 지금 값 저장</small>
+              </button>
+              <button type="button" role="menuitem" id="menu-settings">
+                <span>동기화 설정</span>
+                <small>중계 서버 주소 · 접속 토큰</small>
               </button>
               <button type="button" role="menuitem" id="menu-clear" class="danger">
                 <span>불러온 데이터 지우기</span>
@@ -173,6 +181,11 @@
         <div class="card-head">
           <h2 id="hold-title">보유 종목</h2>
           <span class="hint" id="hold-count"></span>
+        </div>
+        <div class="group-toolbar" id="hold-toolbar" hidden>
+          <div class="seg small" id="hold-account-seg" role="group" aria-label="계좌 선택"></div>
+          <button type="button" class="btn primary" id="holding-add">+ 종목 추가</button>
+          <button type="button" class="btn" id="cash-edit">현금 수정</button>
         </div>
         <p class="empty-state" id="hold-empty" hidden></p>
         <div class="table-wrap" id="hold-wrap"><table id="hold-table" class="data"></table></div>
