@@ -45,14 +45,26 @@ export function openPhotoReview(results: PhotoResult[], accounts: string[], usdK
     dlg.className = 'dialog wide';
     document.body.appendChild(dlg);
   }
-  const matchLabel: Record<string, string> = { name: '이름', quantity: '수량', value: '금액' };
+  const matchLabel: Record<string, string> = { name: '이름', quantity: '수량', value: '금액', list: '종목 목록' };
+  const pick = (r: PhotoRow) =>
+    r.candidates && r.candidates.length > 1
+      ? `<select name="pick" class="pick" aria-label="같은 앞부분의 종목 중 고르기">${r.candidates
+          .map((c) => `<option value="${escapeHtml(c.code)}" data-name="${escapeHtml(c.name)}" ${c.code === r.code ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`)
+          .join('')}</select><small class="ocr">앞부분이 같은 종목 ${r.candidates.length}개 — 맞는 종목을 고르세요</small>`
+      : '';
   const rowHtml = (r: PhotoRow, si: number, ri: number) => `<tr data-s="${si}" data-r="${ri}">
-      <td><input name="name" value="${escapeHtml(r.name)}" aria-label="종목 이름" />${r.ocrName && r.ocrName !== r.name ? `<small class="ocr" title="사진에서 읽은 글자">읽은 글자: ${escapeHtml(r.ocrName)}</small>` : ''}</td>
+      <td><input name="name" value="${escapeHtml(r.name)}" aria-label="종목 이름" />${pick(r)}${r.ocrName && r.ocrName !== r.name ? `<small class="ocr" title="사진에서 읽은 글자">읽은 글자: ${escapeHtml(r.ocrName)}</small>` : ''}</td>
       <td><input name="code" value="${escapeHtml(r.code)}" aria-label="종목코드" class="code-in" /></td>
       <td><input name="quantity" inputmode="decimal" value="${r.quantity ?? ''}" aria-label="수량" class="num" /></td>
       <td><input name="value" inputmode="numeric" value="${won(r.value)}" aria-label="평가금 (원)" class="num" /></td>
       <td><input name="pnl" inputmode="numeric" value="${won(r.pnl)}" aria-label="평가손익 (원)" class="num" placeholder="모름" /></td>
-      <td>${r.matched ? `<span class="chip" title="지금 보유 종목과 ${matchLabel[r.matched]}(으)로 맞춤">${matchLabel[r.matched]}</span>` : '<span class="chip warn">새 종목</span>'}</td>
+      <td>${
+        r.matched === 'list'
+          ? `<span class="chip warn" title="보유하지 않은 종목 — NH 종목 목록에서 찾음">새 종목</span>`
+          : r.matched
+            ? `<span class="chip" title="지금 보유 종목과 ${matchLabel[r.matched]}(으)로 맞춤">${matchLabel[r.matched]}</span>`
+            : '<span class="chip warn" title="종목 목록에서도 찾지 못함 — 이름 · 코드를 확인하세요">확인 필요</span>'
+      }</td>
       <td><button type="button" class="mini danger" data-del aria-label="이 줄 빼기">✕</button></td>
     </tr>`;
   const section = (res: PhotoResult, si: number) => {
@@ -132,6 +144,14 @@ export function openPhotoReview(results: PhotoResult[], accounts: string[], usdK
     } catch {
       /* 숫자 입력 중 */
     }
+  };
+  form.onchange = (e) => {
+    const sel = e.target as HTMLSelectElement;
+    if (sel.name !== 'pick') return;
+    const tr = sel.closest('tr')!;
+    const opt = sel.selectedOptions[0];
+    tr.querySelector<HTMLInputElement>('input[name="name"]')!.value = opt.dataset.name ?? '';
+    tr.querySelector<HTMLInputElement>('input[name="code"]')!.value = opt.value;
   };
   form.oninput = (e) => {
     const sec = (e.target as HTMLElement).closest<HTMLElement>('section[data-s]');

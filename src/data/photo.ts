@@ -20,7 +20,10 @@ export interface PhotoRow {
   pnl: number | null;
   /** OCR 원문 이름 (확인용) */
   ocrName: string;
-  matched: 'name' | 'quantity' | 'value' | null;
+  /** name/quantity/value: 지금 보유 종목과 맞춤 · list: NH 종목 목록에서 찾음 */
+  matched: 'name' | 'quantity' | 'value' | 'list' | null;
+  /** 종목 목록에서 앞부분이 같은 종목이 여러 개일 때 고를 후보 */
+  candidates?: { code: string; name: string }[];
 }
 
 export interface PhotoResult {
@@ -42,8 +45,8 @@ const signed = (s: string) => /^[+\-−~]/.test(s);
 /** 앱 화면의 메뉴 · 광고 줄 (종목 이름에 '배당' 같은 글자가 들어가므로 줄 모양으로 거른다) */
 const STOP = /^(?:시세\s*평가.*|.*총\s*수익.*|.*직접설정.*|.*일간\s*수익.*|계좌\s+수익.*|.*세금\s+배당.*|.*\s관리$|.*관리$|친구와.*|.*다운로드.*|AD\s.*|.*국민 협동.*|자산\s+관심.*|증권사 미제공.*)$/;
 
-const norm = (s: string) => s.replace(/[\s()·.,|_\-]/g, '').toUpperCase();
-function similarity(a: string, b: string): number {
+export const norm = (s: string) => s.replace(/[\s()·.,|_\-]/g, '').toUpperCase();
+export function similarity(a: string, b: string): number {
   const A = norm(a);
   const B = norm(b);
   if (!A || !B) return 0;
@@ -239,7 +242,9 @@ export function matchHoldings(res: PhotoResult, h: HoldingsState): PhotoResult {
       const s = Math.max(similarity(row.ocrName, r.name), r.code ? similarity(row.ocrName, r.code) : 0, prefixScore(row.ocrName, r.name));
       if (s > score) [best, score] = [r, s];
     }
-    return best && score >= 0.45 ? take(row, best, 'name') : row;
+    // 'TIGER 미국…'처럼 앞부분만 같은 다른 종목과 맞추지 않도록 충분히 비슷할 때만.
+    // 이름이 깨졌으면 아래 수량 · 금액 맞추기와 종목 목록 검색이 이어받는다
+    return best && score >= 0.6 ? take(row, best, 'name') : row;
   });
   // 2) 같은 계좌의 같은 수량, 3) 비슷한 평가금
   rows = rows.map((row) => {

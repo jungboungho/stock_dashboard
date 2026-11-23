@@ -141,3 +141,13 @@ TIGER                            350,000원
     expect(r.rows[1].matched).toBe('name');
   });
 });
+
+describe('다른 계좌 종목과의 오인 방지', () => {
+  it("이 계좌에 없는 종목이 다른 계좌의 'TIGER 미국…' 종목과 맞춰지지 않는다", () => {
+    const h = holdings();
+    h.rows = h.rows.filter((r) => r.code !== '418660'); // ISA 에서 레버리지 ETF 없음
+    h.rows.push({ account: '연금1', code: '360750', name: 'TIGER 미국S&P500', currency: 'KRW', quantity: 7, avgPrice: 9000, price: 9000 });
+    const parsed = { account: 'ISA', total: null, cashKRW: null, cashUSD: null, rows: [{ name: 'TIGER 미국나스닥100레버리지.', ocrName: 'TIGER 미국나스닥100레버리지.', code: '', currency: 'KRW' as const, quantity: 20, value: 250_000, pnl: null, matched: null }] };
+    expect(matchHoldings(parsed, h).rows[0].matched).toBeNull();
+  });
+});

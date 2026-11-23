@@ -55,6 +55,7 @@ import {
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
+import { fillFromInstruments, loadInstruments, type Instrument } from './data/instruments';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -1297,11 +1298,14 @@ async function updateFromPhotos(files: File[]) {
   const accounts = holdingAccounts();
   const totals = Object.fromEntries(Object.entries(accountTotals(book.holdings, usd)).map(([a, t]) => [a, t.value + t.cash]));
   try {
+    const listPromise = loadInstruments().catch((): Instrument[] => []); // 보유 종목에 없는 종목은 NH 종목 목록에서
     const texts = await recognizeImages(files, (msg) => showNote(msg));
+    const list = await listPromise;
     const results = texts.map((t) => {
       const r = parseAccountScreen(t, accounts);
       r.account ??= guessAccountByTotal(r.total, totals) ?? (files.length === 1 && holdAccount !== 'ALL' ? holdAccount : null);
-      return matchHoldings(r, book.holdings);
+      const m = matchHoldings(r, book.holdings);
+      return { ...m, rows: fillFromInstruments(m.rows, list) };
     });
     showNote(`사진 ${files.length}장을 읽었습니다. 확인 화면에서 값을 확인하고 적용하세요.`);
     openPhotoReview(results, accounts, usd, (list) => {
