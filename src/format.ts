@@ -19,3 +19,15 @@ export const monthLabel = (ym: string) => `${ym.slice(2, 4)}.${ym.slice(5, 7)}`;
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
+
+/** 큰 금액을 '3억 7,386만' 처럼 */
+export function wonShort(n: number): string {
+  const sign = n < 0 ? '−' : '';
+  const a = Math.abs(Math.round(n));
+  const eok = Math.floor(a / 1e8);
+  const man = Math.round((a % 1e8) / 1e4);
+  if (eok && man) return `${sign}${eok}억 ${won0.format(man)}만`;
+  if (eok) return `${sign}${eok}억`;
+  if (man) return `${sign}${won0.format(man)}만`;
+  return `${sign}${won0.format(a)}원`;
+}

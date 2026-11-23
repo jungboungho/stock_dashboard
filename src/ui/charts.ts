@@ -358,3 +358,63 @@ export function renderDividends(canvas: HTMLCanvasElement, months: string[], amo
   });
   return chart;
 }
+
+// ─── 연초 대비 수익률 (연도별 곡선) ─────────────────────────────
+
+export interface YtdSeries {
+  year: number;
+  color: string;
+  points: { month: number; ytd: number; date: string }[];
+}
+
+export function renderYtd(canvas: HTMLCanvasElement, series: YtdSeries[], goal: number | null, prev?: AnyChart): AnyChart {
+  prev?.destroy();
+  const labels = Array.from({ length: 12 }, (_, i) => `${i + 1}월`);
+  const datasets: any[] = series.map((s) => ({
+    label: `${s.year}년`,
+    data: labels.map((_, i) => s.points.find((p) => p.month === i + 1)?.ytd ?? null),
+    borderColor: s.color,
+    backgroundColor: s.color,
+    borderWidth: 2,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    pointBorderColor: token('--surface'),
+    pointBorderWidth: 1.5,
+    spanGaps: true,
+  }));
+  if (goal !== null) {
+    datasets.push({
+      label: `목표 ${pctSigned(goal, 0)}`,
+      data: labels.map(() => goal),
+      borderColor: token('--text-muted'),
+      borderWidth: 1.5,
+      borderDash: [5, 4],
+      pointRadius: 0,
+      pointHoverRadius: 0,
+    });
+  }
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { grid: { display: false }, border: { display: false } },
+        y: {
+          ticks: { callback: (v) => pctSigned(Number(v), 0), maxTicksLimit: 6 },
+          border: { display: false },
+          grid: { color: (c) => (c.tick.value === 0 ? token('--text-muted') : token('--grid')) },
+        },
+      },
+      plugins: {
+        tooltip: {
+          displayColors: true,
+          filter: (item) => item.raw !== null,
+          callbacks: { label: (item) => `${item.dataset.label}  ${pctSigned(Number(item.raw))}` },
+        },
+      },
+    },
+    plugins: [crosshairFollow as Plugin<'line'>],
+  });
+  return chart;
+}
