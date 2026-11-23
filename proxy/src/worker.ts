@@ -11,6 +11,10 @@ export default {
     return handle(req, env, {
       get: async () => JSON.parse((await env.TOKENS.get('nh_token')) ?? 'null'),
       set: async (t) => env.TOKENS.put('nh_token', JSON.stringify(t), { expirationTtl: 86400 }),
+    }, {
+      // 공유 종목 목록 (같은 KV, 다른 키)
+      get: () => env.TOKENS.get('instruments'),
+      put: (v) => env.TOKENS.put('instruments', v),
     });
   },
 };

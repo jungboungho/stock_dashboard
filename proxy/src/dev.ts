@@ -57,7 +57,11 @@ createServer(async (req, res) => {
     headers: req.headers as Record<string, string>,
     body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
   });
-  const response = await handle(request, env, tokens);
+  const listFile = resolve(root, 'local-data', 'instruments-shared.json');
+  const response = await handle(request, env, tokens, {
+    get: async () => (existsSync(listFile) ? readFileSync(listFile, 'utf8') : null),
+    put: async (v) => writeFileSync(listFile, v),
+  });
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
   console.log(new Date().toISOString().slice(11, 19), req.method, req.url, response.status);

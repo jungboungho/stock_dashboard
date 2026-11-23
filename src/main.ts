@@ -55,7 +55,7 @@ import {
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
-import { fillFromInstruments, loadInstruments, refreshInstruments, savedListInfo, type Instrument } from './data/instruments';
+import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, type Instrument } from './data/instruments';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -190,6 +190,7 @@ function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | n
   saveStore(MINE, storeFromGroups(book.groups));
   const saved = saveExcelLocal();
   setModel(makeExcelModel(book));
+  instrumentsLabel();
   const n = book.holdings.rows.length;
   showNote(
     `${fileName}을(를) 불러왔습니다 · 보유종목 ${n}개 · 그룹 ${book.groups.length}개. ${n ? '"② 최신 정보 가져오기"로 현재가를 반영하세요.' : '보유 종목 표에서 계좌별로 종목을 추가하거나 "② 최신 정보 가져오기"를 누르세요.'}${syncNote}${saved ? '' : ' (브라우저 저장 공간이 부족해 새로고침하면 다시 불러와야 합니다)'}`,
@@ -1285,12 +1286,18 @@ async function exportExcel() {
 
 // ─── 종목 목록 업데이트 ───────────────────────────────────────
 
+/** 버튼 설명: 지금 쓰는 종목 목록 (공유 목록이면 다른 기기에서 받은 것도 포함) */
 function instrumentsLabel() {
-  const info = savedListInfo();
   const btn = $('instruments-btn');
-  btn.title = info
-    ? `저장된 종목 목록: 국내 ${number(info.kr)} · 미국 ${number(info.us)} (${timeLabel(info.updatedAt)}). 누르면 NH 최신 목록으로 다시 받습니다`
-    : 'NH 국내 · 미국 종목 목록을 최신으로 받아 사진 업데이트의 종목 찾기에 씁니다';
+  loadInstrumentList(loadSyncSettings())
+    .then((l) => {
+      const i = listInfo(l);
+      const where = { shared: '모든 기기 공유 목록', local: '이 브라우저 저장본', bundled: '사이트 기본 목록 (국내만)' }[i.source];
+      btn.title = `${where}: 국내 ${number(i.kr)} · 미국 ${number(i.us)}${i.updatedAt ? ` (${timeLabel(i.updatedAt)})` : ''}. 누르면 NH 최신 목록을 받아 모든 기기에 공유합니다`;
+    })
+    .catch(() => {
+      btn.title = 'NH 국내 · 미국 종목 목록을 최신으로 받아 모든 기기에 공유합니다';
+    });
 }
 
 async function updateInstrumentList() {
@@ -1304,7 +1311,12 @@ async function updateInstrumentList() {
   try {
     const r = await refreshInstruments(settings, (msg) => showNote(msg));
     instrumentsLabel();
-    showNote(`종목 목록을 최신으로 바꿨습니다 · 국내 ${number(r.kr)}종목 · 미국 ${number(r.us)}종목. 사진으로 계좌 업데이트에서 이 목록으로 종목을 찾습니다.`);
+    showNote(
+      r.shared
+        ? `종목 목록을 최신으로 바꾸고 모든 기기에 공유했습니다 · 국내 ${number(r.kr)}종목 · 미국 ${number(r.us)}종목. 다른 기기는 다음에 열 때 이 목록을 씁니다.`
+        : `종목 목록을 이 브라우저에만 저장했습니다 (공유 실패: ${r.error}) · 국내 ${number(r.kr)} · 미국 ${number(r.us)}`,
+      !r.shared,
+    );
   } catch (ex) {
     showNote(`종목 목록을 받지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true);
   } finally {
@@ -1329,7 +1341,7 @@ async function updateFromPhotos(files: File[]) {
   const accounts = holdingAccounts();
   const totals = Object.fromEntries(Object.entries(accountTotals(book.holdings, usd)).map(([a, t]) => [a, t.value + t.cash]));
   try {
-    const listPromise = loadInstruments().catch((): Instrument[] => []); // 보유 종목에 없는 종목은 NH 종목 목록에서
+    const listPromise = loadInstruments(loadSyncSettings()).catch((): Instrument[] => []); // 보유 종목에 없는 종목은 NH 종목 목록에서
     const texts = await recognizeImages(files, (msg) => showNote(msg));
     const list = await listPromise;
     const results = texts.map((t) => {

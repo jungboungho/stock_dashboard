@@ -3,7 +3,18 @@ import { buildSync, parseAccountMap, type Currency, type TokenStore } from './nh
 // 중계 서버 공통 처리 (Cloudflare Worker · 로컬 개발 서버가 같이 씀)
 //  GET  /health  → 설정된 계좌 이름 (NH 호출 없음)
 //  POST /sync    → { quotes: [{code, currency}] } → SyncResult
+//  GET  /instruments/<m_new_stock|m_gtsstock>.mst → NH 종목 마스터 그대로 전달
+//  GET  /instruments  → 공유 종목 목록 (없으면 404)
+//  PUT  /instruments  → 공유 종목 목록 저장 (브라우저가 마스터를 해석해 올림)
 // 모든 요청은 Authorization: Bearer <PROXY_TOKEN> 필요.
+
+/** 공유 종목 목록 저장소 (Worker: KV · 개발 서버: 파일) */
+export interface ListStore {
+  get(): Promise<string | null>;
+  put(value: string): Promise<void>;
+}
+
+const MAX_LIST_BYTES = 5_000_000;
 
 export interface ProxyEnv {
   NH_APP_KEY: string;
@@ -22,7 +33,7 @@ function cors(req: Request, env: ProxyEnv): Record<string, string> {
   if (!allowed.includes(origin)) return {};
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Allow-Private-Network': 'true',
     'Access-Control-Max-Age': '600',
@@ -37,7 +48,7 @@ function safeEqual(a: string, b: string): boolean {
   return d === 0;
 }
 
-export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore): Promise<Response> {
+export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore, list?: ListStore): Promise<Response> {
   // 비밀값을 넣을 때 따라 들어온 줄바꿈 · 공백 제거
   const t = (v: string | undefined) => (v ?? '').trim();
   const env: ProxyEnv = { ...rawEnv, NH_APP_KEY: t(rawEnv.NH_APP_KEY), NH_APP_SECRET: t(rawEnv.NH_APP_SECRET), NH_ACCOUNTS: t(rawEnv.NH_ACCOUNTS), PROXY_TOKEN: t(rawEnv.PROXY_TOKEN) };
@@ -58,6 +69,19 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore)
       const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 60);
       const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes);
       return json(result);
+    }
+    if (path === '/instruments' && list) {
+      if (req.method === 'GET') {
+        const v = await list.get();
+        return v ? new Response(v, { headers: { ...h, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } }) : json({ error: '공유된 종목 목록이 아직 없습니다' }, 404);
+      }
+      if (req.method === 'PUT') {
+        const text = await req.text();
+        // CPU 를 아끼려고 전체를 해석하지 않고 모양만 확인
+        if (text.length > MAX_LIST_BYTES || !/^\{"updatedAt":"[^"]+","items":\[\[/.test(text) || !text.endsWith(']]}')) return json({ error: '종목 목록 형식이 아닙니다' }, 400);
+        await list.put(text);
+        return json({ ok: true, bytes: text.length });
+      }
     }
     // 종목 마스터 파일 (공개 · 인증 불필요). NH 사이트가 브라우저 직접 접근(CORS)을 막아서 그대로 전달만 한다.
     // 해석은 브라우저가 한다 (Worker 무료 CPU 한도 안에서 끝나도록)

@@ -2,9 +2,9 @@ import { norm, similarity, type PhotoRow } from './photo';
 
 // ─────────────────────────────────────────────────────────────
 // NH 종목 목록 (국내 주식 · ETF + 미국 주식 · ETF)
-//  - 기본: public/instruments.json (국내, tools/build_instruments.py 로 만듦)
 //  - "종목 목록 업데이트" 버튼: 중계 서버를 거쳐 NH 종목 마스터(.mst)를 받아 브라우저에서 해석하고
-//    이 브라우저에 저장 → 그 뒤로는 저장된 최신 목록을 쓴다
+//    중계 서버에 '공유 목록'으로 올린다 → 어느 기기에서든 한 번 누르면 모든 기기가 같은 최신 목록을 쓴다
+//  - 읽을 때: 공유 목록 → (못 받으면) 이 브라우저에 저장된 목록 → public/instruments.json (국내, 기본)
 // 사진에서 읽은 종목 이름 앞부분으로 종목명 · 코드를 찾을 때 쓴다.
 // ─────────────────────────────────────────────────────────────
 
@@ -19,45 +19,88 @@ export interface Instrument {
 export interface InstrumentList {
   updatedAt: string | null;
   items: Instrument[];
+  /** shared: 중계 서버 공유 목록 · local: 이 브라우저 저장본 · bundled: 사이트 기본 (국내만) */
+  source: 'shared' | 'local' | 'bundled';
 }
+
+type Proxy = { url: string; token: string };
+type Wire = { updatedAt: string; items: [string, string, Market][] };
 
 const KEY = 'stock-dashboard:instruments:v1';
 let cache: Promise<InstrumentList> | null = null;
+/** 캐시가 어느 중계 서버 기준인지 (설정이 생기면 공유 목록을 다시 확인) */
+let cacheFor = '';
 
-function loadSaved(): InstrumentList | null {
+const fromWire = (d: Wire, source: InstrumentList['source']): InstrumentList => ({
+  updatedAt: d.updatedAt,
+  items: d.items.map(([code, name, market]) => ({ code, name, market })),
+  source,
+});
+
+function loadSaved(): Wire | null {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const d = JSON.parse(raw) as { updatedAt: string; items: [string, string, Market][] };
-    return { updatedAt: d.updatedAt, items: d.items.map(([code, name, market]) => ({ code, name, market })) };
+    return raw ? (JSON.parse(raw) as Wire) : null;
   } catch {
     return null;
   }
 }
 
-export function savedListInfo(): { updatedAt: string; kr: number; us: number } | null {
-  const l = loadSaved();
-  return l?.updatedAt ? { updatedAt: l.updatedAt, kr: l.items.filter((i) => i.market === 'KR').length, us: l.items.filter((i) => i.market === 'US').length } : null;
+function saveLocal(text: string): void {
+  try {
+    localStorage.setItem(KEY, text);
+  } catch {
+    /* 저장 공간 부족: 이번 화면에서만 사용 */
+  }
 }
 
-export function loadInstrumentList(): Promise<InstrumentList> {
-  const saved = loadSaved();
-  if (saved) return Promise.resolve(saved);
+export function listInfo(l: InstrumentList): { updatedAt: string | null; kr: number; us: number; source: InstrumentList['source'] } {
+  return { updatedAt: l.updatedAt, kr: l.items.filter((i) => i.market === 'KR').length, us: l.items.filter((i) => i.market === 'US').length, source: l.source };
+}
+
+async function fetchShared(proxy: Proxy): Promise<Wire | null> {
+  const res = await fetch(`${proxy.url}/instruments`, { headers: { Authorization: `Bearer ${proxy.token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`공유 종목 목록을 받지 못했습니다 (${res.status})`);
+  return (await res.json()) as Wire;
+}
+
+async function fetchBundled(): Promise<InstrumentList> {
   // 개발 서버는 BASE_URL '/', 배포본은 './' (페이지 기준 → /stock_dashboard/instruments.json)
-  cache ??= fetch(`${import.meta.env.BASE_URL}instruments.json`)
-    .then((r) => {
-      if (!r.ok) throw new Error(`종목 목록을 받지 못했습니다 (${r.status})`);
-      return r.json() as Promise<{ items: [string, string][] }>;
-    })
-    .then((d) => ({ updatedAt: null, items: d.items.map(([code, name]) => ({ code, name, market: 'KR' as const })) }))
-    .catch((e) => {
-      cache = null;
-      throw e;
-    });
+  const r = await fetch(`${import.meta.env.BASE_URL}instruments.json`);
+  if (!r.ok) throw new Error(`종목 목록을 받지 못했습니다 (${r.status})`);
+  const d = (await r.json()) as { items: [string, string][] };
+  return { updatedAt: null, items: d.items.map(([code, name]) => ({ code, name, market: 'KR' as const })), source: 'bundled' };
+}
+
+/** 가장 최신 목록. 중계 서버 공유 목록이 이 브라우저 저장본보다 새것이면 저장본도 바꾼다 */
+export function loadInstrumentList(proxy?: Proxy | null): Promise<InstrumentList> {
+  const key = proxy?.token ? proxy.url : '';
+  if (key !== cacheFor) cache = null;
+  cacheFor = key;
+  cache ??= (async () => {
+    const saved = loadSaved();
+    if (proxy?.token) {
+      try {
+        const shared = await fetchShared(proxy);
+        if (shared && (!saved || shared.updatedAt > saved.updatedAt)) {
+          saveLocal(JSON.stringify(shared));
+          return fromWire(shared, 'shared');
+        }
+        if (shared && saved && shared.updatedAt === saved.updatedAt) return fromWire(saved, 'shared');
+      } catch {
+        /* 중계 서버에 못 닿으면 저장본 · 기본 목록 */
+      }
+    }
+    return saved ? fromWire(saved, 'local') : fetchBundled();
+  })().catch((e) => {
+    cache = null;
+    throw e;
+  });
   return cache;
 }
 
-export const loadInstruments = () => loadInstrumentList().then((l) => l.items);
+export const loadInstruments = (proxy?: Proxy | null) => loadInstrumentList(proxy).then((l) => l.items);
 
 // ─── NH 종목 마스터(.mst) 해석: CP949 · 고정 길이 레코드 (구조는 nhplug.com/instruments/*.h) ───
 
@@ -93,8 +136,8 @@ export function parseOverseasMaster(bytes: Uint8Array): Instrument[] {
   return out;
 }
 
-/** 중계 서버를 거쳐 국내 · 미국 종목 마스터를 받아 이 브라우저에 저장 */
-export async function refreshInstruments(proxy: { url: string; token: string }, onProgress: (msg: string) => void): Promise<{ kr: number; us: number }> {
+/** 중계 서버를 거쳐 국내 · 미국 종목 마스터를 받아 해석하고, 공유 목록으로 올린다 (이 브라우저에도 저장) */
+export async function refreshInstruments(proxy: Proxy, onProgress: (msg: string) => void): Promise<{ kr: number; us: number; shared: boolean; error?: string }> {
   const get = async (file: string, label: string) => {
     onProgress(`${label} 종목 파일 받는 중…`);
     let res: Response;
@@ -110,14 +153,20 @@ export async function refreshInstruments(proxy: { url: string; token: string }, 
   const kr = parseDomesticMaster(await get('m_new_stock', '국내'));
   const us = parseOverseasMaster(await get('m_gtsstock', '해외'));
   if (kr.length < 1000) throw new Error(`국내 종목이 너무 적습니다 (${kr.length}) — 파일을 확인하세요`);
-  const updatedAt = new Date().toISOString();
+  const wire: Wire = { updatedAt: new Date().toISOString(), items: [...kr, ...us].map((i) => [i.code, i.name, i.market]) };
+  const text = JSON.stringify(wire);
+  saveLocal(text);
+  cacheFor = proxy.url;
+  cache = Promise.resolve(fromWire(wire, 'local'));
+  onProgress('공유 목록으로 올리는 중…');
   try {
-    localStorage.setItem(KEY, JSON.stringify({ updatedAt, items: [...kr, ...us].map((i) => [i.code, i.name, i.market]) }));
-  } catch {
-    throw new Error('브라우저 저장 공간이 부족해 종목 목록을 저장하지 못했습니다');
+    const res = await fetch(`${proxy.url}/instruments`, { method: 'PUT', headers: { Authorization: `Bearer ${proxy.token}`, 'Content-Type': 'application/json' }, body: text });
+    if (!res.ok) throw new Error(`중계 서버 응답 ${res.status}`);
+    cache = Promise.resolve(fromWire(wire, 'shared'));
+    return { kr: kr.length, us: us.length, shared: true };
+  } catch (e) {
+    return { kr: kr.length, us: us.length, shared: false, error: e instanceof Error ? e.message : String(e) };
   }
-  cache = null;
-  return { kr: kr.length, us: us.length };
 }
 
 // ─── 검색 ─────────────────────────────────────────────────────
