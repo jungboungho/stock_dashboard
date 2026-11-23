@@ -75,6 +75,10 @@ export interface DashboardData {
   /** 연도별 연초 자산 · 순입금을 원본이 직접 가지고 있으면 그 값을 쓴다 (엑셀 Summary) */
   yearStarts?: YearStart[];
   deposits?: DepositData;
+  /** 자산 추이에서 여러 개를 골라 볼 수 있는 계좌 (엑셀: 입금내역 계좌) */
+  trendAccounts?: string[];
+  /** 고른 계좌들만의 자산 추이 (계좌별 기록이 있는 날짜부터) */
+  accountSnapshots?(accounts: string[]): DailySnapshot[];
   /** 그룹 기본값을 만들 때 쓰는 힌트 */
   defaultGroups?: { name: string; match: (p: Position) => boolean }[];
 }

@@ -234,3 +234,22 @@ describe('NH 토큰 무효 응답', () => {
     expect(res.accounts).toEqual([]);
   });
 });
+
+describe('계좌별 자산 추이', () => {
+  it('고른 계좌의 일별 평가금 합 · 입금내역 원금 · 수익률', async () => {
+    const { excelAccountSnapshots } = await import('../src/data/excelModel');
+    const book = parseStockBook(readWorkbook(baseXlsx()), 'test.xlsx');
+    book.dailyLog = [
+      { date: '2026-11-01', total: 300, accounts: { 종합: 120, ISA: 60, 연금1: 120 } },
+      { date: '2026-11-05', total: 330, accounts: { 종합: 140, ISA: 70, 연금1: 120 } },
+    ];
+    const s = excelAccountSnapshots(book, ['종합', 'ISA'], '2026-11-30');
+    // 원금: 입금내역 종합 100(9/1) + 10(11/2), ISA 50(9/1)
+    expect(s.map((x) => [x.date, x.value, x.principal, x.netFlow])).toEqual([
+      ['2026-11-01', 180, 150, 150],
+      ['2026-11-05', 210, 160, 10],
+    ]);
+    expect(s[1].twr).toBeCloseTo(210 / (180 + 10) - 1, 10);
+    expect(excelAccountSnapshots(book, ['IRP'], '2026-11-30')).toEqual([]); // 기록 없는 계좌
+  });
+});

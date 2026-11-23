@@ -97,6 +97,8 @@ let model: DashboardData;
 let store: GroupStore;
 let state: State;
 let snaps: DailySnapshot[] = [];
+/** 자산 추이에서 고른 계좌 (비어 있으면 전체) */
+let trendAccounts: string[] = [];
 let dimColorOrder: Record<string, string[]> = {};
 const charts: { trend?: TrendCharts; compare?: AnyChart; donut?: AnyChart; div?: AnyChart; ytd?: AnyChart; dep?: AnyChart } = {};
 
@@ -595,8 +597,49 @@ function renderKpis() {
     .join('');
 }
 
+/** 자산 추이용 스냅샷: 전체, 또는 고른 계좌들의 합 */
+function trendSnaps(): DailySnapshot[] {
+  if (!trendAccounts.length || !model.accountSnapshots) return snaps;
+  return model.accountSnapshots(trendAccounts);
+}
+
+function renderTrendAccounts() {
+  const list = model.trendAccounts ?? [];
+  const row = $('trend-accounts-row');
+  row.hidden = !list.length || !model.accountSnapshots;
+  trendAccounts = trendAccounts.filter((a) => list.includes(a));
+  if (row.hidden) {
+    $('trend-accounts-note').hidden = true;
+    return;
+  }
+  const box = $('trend-accounts');
+  box.innerHTML = [{ id: '', label: '전체 계좌' }, ...list.map((a) => ({ id: a, label: a }))]
+    .map((i) => `<button type="button" data-acc="${escapeHtml(i.id)}" aria-pressed="${i.id ? trendAccounts.includes(i.id) : !trendAccounts.length}">${escapeHtml(i.label)}</button>`)
+    .join('');
+  box.onclick = (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-acc]');
+    if (!b) return;
+    const a = b.dataset.acc!;
+    if (!a) trendAccounts = [];
+    else trendAccounts = trendAccounts.includes(a) ? trendAccounts.filter((x) => x !== a) : [...trendAccounts, a];
+    // 모든 계좌를 고르면 '전체'와 같으므로 전체로
+    if (trendAccounts.length === list.length) trendAccounts = [];
+    renderTrendSection();
+  };
+}
+
 function renderTrendSection() {
   const { rangeA, rangeB, compare, mode } = state;
+  renderTrendAccounts();
+  const snaps = trendSnaps();
+  const note = $('trend-accounts-note');
+  note.hidden = !trendAccounts.length;
+  if (trendAccounts.length) {
+    const first = snaps[0]?.date;
+    note.textContent = snaps.length < 2
+      ? `${trendAccounts.join(' + ')}: 계좌별 기록이 아직 ${snaps.length}일뿐입니다. 동기화 · 사진 업데이트 · 편집할 때마다 그날 값이 쌓입니다 (원금은 입금내역 기준).`
+      : `${trendAccounts.join(' + ')}: 계좌별 기록이 있는 ${first}부터 표시합니다 (원금은 입금내역 기준).`;
+  }
   pressed($('preset-seg'), state.preset);
   pressed($('return-mode'), mode, 'mode');
   const min = firstActiveDate();
@@ -614,7 +657,7 @@ function renderTrendSection() {
   $('compare-panel').hidden = !compare;
 
   $('trend-legend').innerHTML = [
-    `<span class="item"><span class="swatch line" style="background:${token('--value-line')}"></span>${model.source === 'excel' ? '총자산 (월말)' : '평가금'}</span>`,
+    `<span class="item"><span class="swatch line" style="background:${token('--value-line')}"></span>${model.source === 'excel' && !trendAccounts.length ? '총자산 (월말)' : '평가금'}</span>`,
     `<span class="item"><span class="swatch" style="background:${token('--principal-fill')};border:2px solid ${token('--principal')}"></span>원금</span>`,
     `<span class="item"><span class="swatch" style="background:${token('--up-fill')}"></span>수익금 (+)</span>`,
     `<span class="item"><span class="swatch" style="background:${token('--down-fill')}"></span>손실 (−)</span>`,

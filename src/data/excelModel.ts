@@ -1,6 +1,6 @@
 import type { DashboardData } from './model';
 import type { ExcelBook } from './excel/parse';
-import { cashByAccount, holdingsTotal, toPositions } from './holdings';
+import { accountTotals, cashByAccount, holdingsTotal, toPositions } from './holdings';
 import type { DailySnapshot, ISODate } from '../types';
 
 const monthEnd = (ym: string): ISODate => {
@@ -88,6 +88,43 @@ export function excelSnapshots(book: ExcelBook, today: ISODate): DailySnapshot[]
   return out;
 }
 
+/**
+ * 고른 계좌들만의 자산 추이.
+ * 평가금은 계좌별로 기록된 날(일별 자산추이 + 지금 보유종목)만 알 수 있고,
+ * 원금은 입금내역의 그 계좌 열을 날짜까지 더한다.
+ */
+export function excelAccountSnapshots(book: ExcelBook, accounts: string[], today: ISODate): DailySnapshot[] {
+  const pick = new Set(accounts);
+  const points = new Map<string, number>();
+  for (const d of book.dailyLog ?? []) {
+    if (d.date > today || !accounts.some((a) => a in d.accounts)) continue;
+    points.set(d.date, sum(accounts.map((a) => d.accounts[a] ?? 0)));
+  }
+  const h = book.holdings;
+  if (h.asOf && (h.rows.length || h.cash.length)) {
+    const live = h.asOf.slice(0, 10) > today ? today : h.asOf.slice(0, 10);
+    const t = accountTotals(h, bookUsdKrw(book));
+    points.set(live, sum(accounts.map((a) => (t[a] ? t[a].value + t[a].cash : 0))));
+  }
+  const cols = book.depositAccounts.map((a, i) => (pick.has(a) ? i : -1)).filter((i) => i >= 0);
+  const principalAt = (date: string) => sum(book.deposits.filter((d) => d.date <= date).map((d) => sum(cols.map((i) => d.amounts[i] ?? 0))));
+
+  const out: DailySnapshot[] = [];
+  let prevValue = 0;
+  let prevPrincipal = 0;
+  let growth = 1;
+  for (const [date, value] of [...points].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const principal = principalAt(date);
+    const flow = out.length ? principal - prevPrincipal : principal;
+    const base = prevValue + (out.length ? flow : 0);
+    if (out.length && base > 0) growth *= value / base;
+    out.push({ date, principal, value, profit: value - principal, simpleReturn: principal > 0 ? (value - principal) / principal : 0, netFlow: flow, twr: growth - 1 });
+    prevValue = value;
+    prevPrincipal = principal;
+  }
+  return out;
+}
+
 /** 엑셀(Summary · 입금내역 · 보유종목) → 화면 데이터. book.holdings 가 바뀌면 다시 계산한다 */
 export function makeExcelModel(book: ExcelBook, today: ISODate = new Date().toISOString().slice(0, 10)): DashboardData {
   let cacheKey: unknown[] = [];
@@ -125,5 +162,12 @@ export function makeExcelModel(book: ExcelBook, today: ISODate = new Date().toIS
     dividends: () => [],
     yearStarts: book.yearStarts,
     deposits: book.deposits.length ? { accounts: book.depositAccounts, rows: book.deposits } : undefined,
+    get trendAccounts() {
+      const set = new Set(book.depositAccounts);
+      for (const d of book.dailyLog) for (const a of Object.keys(d.accounts)) set.add(a);
+      for (const r of book.holdings.rows) set.add(r.account);
+      return [...set];
+    },
+    accountSnapshots: (accounts) => excelAccountSnapshots(book, accounts, today),
   };
 }
