@@ -35,10 +35,12 @@ export interface ExcelGroup {
   keys: string[];
 }
 
-export interface SnapshotLogRow {
+/** 일별 자산추이 한 줄 (그날 보유종목 기준 계좌별 평가금 + 현금) */
+export interface DailyRow {
   date: ISODate;
-  account: string;
-  value: number;
+  total: number;
+  /** 계좌 이름 → 평가금 (원) */
+  accounts: Record<string, number>;
 }
 
 export interface ExcelBook {
@@ -56,19 +58,33 @@ export interface ExcelBook {
   deposits: ExcelDeposit[];
   holdings: HoldingsState;
   groups: ExcelGroup[];
-  snapshotLog: SnapshotLogRow[];
+  dailyLog: DailyRow[];
+  /** '월별 자산추이' 시트의 월 → 기말자산 (원). Summary 기말자산이 빈 달에 쓴다 */
+  monthlyValues: Record<string, number>;
 }
 
 /** 예전(v2)에 저장된 값도 읽는다 */
 export function upgradeBook(raw: unknown): ExcelBook | null {
-  const b = raw as Omit<Partial<ExcelBook>, 'version'> & { version?: number };
+  const b = raw as Omit<Partial<ExcelBook>, 'version'> & { version?: number; snapshotLog?: { date: ISODate; account: string; value: number }[] };
   if (!b || (b.version !== 2 && b.version !== 3)) return null;
-  return { ...(b as unknown as ExcelBook), version: 3, holdings: b.holdings ?? emptyHoldings(), groups: b.groups ?? [], snapshotLog: b.snapshotLog ?? [] };
+  const { snapshotLog, ...rest } = b;
+  return {
+    ...(rest as unknown as ExcelBook),
+    version: 3,
+    holdings: b.holdings ?? emptyHoldings(),
+    groups: b.groups ?? [],
+    dailyLog: b.dailyLog ?? dailyFromLong(snapshotLog ?? []),
+    monthlyValues: b.monthlyValues ?? {},
+  };
 }
 
 export const HOLDINGS_SHEET = '보유종목';
 export const GROUPS_SHEET = '그룹';
-export const SNAPSHOT_SHEET = '자산스냅샷';
+/** 예전 이름 (계좌별 세로 형식). 읽을 때만 쓰고, 쓸 때는 '일별 자산추이'로 이름을 바꾼다 */
+export const OLD_SNAPSHOT_SHEET = '자산스냅샷';
+export const DAILY_SHEET = '일별 자산추이';
+export const MONTHLY_SHEET = '월별 자산추이';
+export const TOTAL_LABEL = '합계';
 export const CASH_CODE = '현금';
 export const SETTINGS_SHEET = '설정';
 export const SETTING_URL = '중계 서버 주소';
@@ -278,7 +294,8 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
     deposits,
     holdings,
     groups: parseGroups(book),
-    snapshotLog: parseSnapshotLog(book),
+    dailyLog: parseDaily(book),
+    monthlyValues: parseMonthly(book),
   };
 }
 
@@ -363,13 +380,71 @@ export function parseSyncSettings(book: Workbook): { url: string; token: string 
   return url && token ? { url, token } : null;
 }
 
-export function parseSnapshotLog(book: Workbook): SnapshotLogRow[] {
-  const out: SnapshotLogRow[] = [];
-  for (const r of table(findSheet(book, SNAPSHOT_SHEET), ['기준일', '계좌', '평가금액(원)'])) {
-    const date = toDate(r['기준일']);
-    const value = num(r['평가금액(원)']);
-    const account = str(r['계좌']);
-    if (date && account && value !== undefined) out.push({ date, account, value });
+/** 예전 '자산스냅샷'(기준일 · 계좌 · 평가금액) → 일별 행 */
+function dailyFromLong(rows: { date: ISODate; account: string; value: number }[]): DailyRow[] {
+  const byDate = new Map<string, DailyRow>();
+  for (const r of rows) {
+    const d = byDate.get(r.date) ?? { date: r.date, total: 0, accounts: {} };
+    if (r.account === TOTAL_LABEL) d.total = r.value;
+    else d.accounts[r.account] = r.value;
+    byDate.set(r.date, d);
+  }
+  for (const d of byDate.values()) if (!d.total) d.total = Object.values(d.accounts).reduce((a, b) => a + b, 0);
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** 일별 자산추이에서 계좌 열이 아닌 머리글 */
+export const DAILY_METRICS = ['날짜', '총자산(원)', '투자원금(원)', '수익금(원)', '수익률'];
+
+export function parseDaily(book: Workbook): DailyRow[] {
+  const rows = table(findSheet(book, DAILY_SHEET), ['날짜', '총자산(원)']);
+  if (!rows.length) {
+    const old: { date: ISODate; account: string; value: number }[] = [];
+    for (const r of table(findSheet(book, OLD_SNAPSHOT_SHEET), ['기준일', '계좌', '평가금액(원)'])) {
+      const date = toDate(r['기준일']);
+      const value = num(r['평가금액(원)']);
+      const account = str(r['계좌']);
+      if (date && account && value !== undefined) old.push({ date, account, value });
+    }
+    return dailyFromLong(old);
+  }
+  const out: DailyRow[] = [];
+  for (const r of rows) {
+    const date = toDate(r['날짜']);
+    const total = num(r['총자산(원)']);
+    if (!date || total === undefined) continue;
+    const accounts: Record<string, number> = {};
+    for (const [k, v] of Object.entries(r)) {
+      const n = num(v);
+      if (!DAILY_METRICS.includes(k) && n !== undefined) accounts[k] = n;
+    }
+    out.push({ date, total, accounts });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function parseMonthly(book: Workbook): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of table(findSheet(book, MONTHLY_SHEET), ['월', '기말자산(원)'])) {
+    const month = toMonth(r['월']);
+    const v = num(r['기말자산(원)']);
+    if (month && v !== undefined) out[month] = v;
   }
   return out;
+}
+
+/** Summary 월별 표에서 월 → 행 번호와 기말자산 열 (엑셀 업데이트 때 수식을 넣을 칸) */
+export function summaryEndCells(book: Workbook): { sheet: string; col: string; rows: Record<string, number> } | null {
+  const sheet = Object.keys(book).find((k) => ['summary', '요약'].includes(k.trim().toLowerCase()));
+  if (!sheet) return null;
+  const g = grid(book[sheet]);
+  const header = findRow(g, (r) => str(g.get('A', r)) === '날짜' && headerMap(g, r).has('기말자산'));
+  if (header === undefined) return null;
+  const col = numToCol(headerMap(g, header).get('기말자산')!);
+  const rows: Record<string, number> = {};
+  for (const r of g.rows.filter((x) => x > header)) {
+    const m = toMonth(g.get('A', r));
+    if (m && !rows[m]) rows[m] = r;
+  }
+  return { sheet, col, rows };
 }

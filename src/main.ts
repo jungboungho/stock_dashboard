@@ -3,10 +3,10 @@ import { DummyProvider } from './data/dummy';
 import { loadPortfolio } from './data/provider';
 import { makeDummyModel } from './data/dummyModel';
 import { bookUsdKrw, makeExcelModel } from './data/excelModel';
-import { parseStockBook, parseSyncSettings, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
+import { parseStockBook, parseSyncSettings, summaryEndCells, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
 import { readWorkbook } from './data/excel/xlsx';
 import { upsertSheets } from './data/excel/write';
-import { buildExportSheets, groupsForExport, nextSnapshotLog } from './data/excel/export';
+import { buildExportSheets, groupsForExport, monthlyFromSheets, summaryLinkCells, upsertDaily } from './data/excel/export';
 import { accountTotals, applySync, holdingKey, removeHolding, setCash, upsertHolding, type HoldingRow, type HoldingsState } from './data/holdings';
 import { checkProxy, fetchSync, loadSyncSettings, normalizeUrl, saveSyncSettings } from './data/sync';
 import type { DashboardData, Position } from './data/model';
@@ -268,6 +268,8 @@ function refreshColorOrder() {
 function holdingsChanged(next: HoldingsState) {
   if (!excelBook) return;
   excelBook.holdings = next;
+  // 오늘(보유종목 기준일) 값을 일별 자산추이에 기록
+  if (next.asOf) excelBook.dailyLog = upsertDaily(excelBook.dailyLog, next, bookUsdKrw(excelBook), next.asOf.slice(0, 10));
   saveExcelLocal();
   refreshColorOrder();
   recomputeAccount();
@@ -992,22 +994,30 @@ function confirmDeleteGroup(id: string) {
 function dialogAddToGroup(groupId: string) {
   const g = store.groups.find((x) => x.id === groupId);
   if (!g) return;
+  // 종목 하나는 그룹 하나에만: 아직 어느 그룹에도 없는(미분류) 종목만 고를 수 있다
+  const known = new Set(store.groups.map((x) => x.id));
   const candidates = aggregateByKey(positions())
-    .filter((p) => store.members[p.key] !== groupId)
+    .filter((p) => !known.has(store.members[p.key]))
     .sort((a, b) => b.valueKRW - a.valueKRW);
   if (!candidates.length) {
-    addStockDialog(groupId);
+    openForm({
+      title: `'${g.name}'에 종목 추가`,
+      description: '모든 보유 종목이 이미 다른 그룹에 들어 있습니다. 다른 그룹의 종목을 옮기려면 그 그룹에서 "빼기"를 하거나 종목 ✎ 수정에서 그룹을 바꾸세요.',
+      fields: [],
+      submitLabel: '새 종목 입력',
+      onSubmit: () => addStockDialog(groupId),
+    });
     return;
   }
   openForm({
     title: `'${g.name}'에 종목 추가`,
-    description: '보유 종목 중에서 고르세요. 다른 그룹에 있던 종목은 이 그룹으로 옮겨집니다. 목록에 없는 종목은 보유 종목 표의 "+ 종목 추가"로 먼저 넣으세요.',
+    description: '어느 그룹에도 없는 종목만 보입니다 (종목 하나는 그룹 하나에만 속함). 목록에 없는 종목은 보유 종목 표의 "+ 종목 추가"로 먼저 넣으세요.',
     fields: [
       {
         name: 'key',
         label: '종목',
         type: 'select',
-        options: candidates.map((p) => ({ value: p.key, label: `${p.name} · ${wonShort(p.valueKRW)} (현재: ${groupNameOf(p.key)})` })),
+        options: candidates.map((p) => ({ value: p.key, label: `${p.name} · ${wonShort(p.valueKRW)}` })),
       },
     ],
     submitLabel: '추가',
@@ -1202,8 +1212,14 @@ async function exportExcel() {
     const usdKrw = bookUsdKrw(book);
     const date = (h.asOf ?? new Date().toISOString()).slice(0, 10);
     const groups = groupsForExport(store);
-    const log = h.rows.length || h.cash.length ? nextSnapshotLog(book.snapshotLog, h, usdKrw, date) : book.snapshotLog;
-    const out = upsertSheets(bytes, buildExportSheets(book, groups, log));
+    book.dailyLog = upsertDaily(book.dailyLog, h, usdKrw, date);
+    const sheets = buildExportSheets(book, groups);
+    const monthly = monthlyFromSheets(sheets);
+    // Summary 기말자산: 일별 기록이 시작된 달부터 '월별 자산추이'와 수식으로 연결
+    const target = summaryEndCells(readWorkbook(bytes));
+    const fromMonth = book.dailyLog[0]?.date.slice(0, 7);
+    const links = target && fromMonth ? summaryLinkCells(book, target, monthly, fromMonth) : [];
+    const out = upsertSheets(bytes, sheets, target && links.length ? { sheet: target.sheet, updates: links } : undefined);
     parseStockBook(readWorkbook(out), book.fileName); // 다시 읽히는지 확인
     let where: string;
     if (excelHandle) {
@@ -1223,9 +1239,11 @@ async function exportExcel() {
     }
     excelBytes = out;
     book.groups = groups;
-    book.snapshotLog = log;
+    book.monthlyValues = monthly;
     saveExcelLocal();
-    showNote(`${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 자산스냅샷 ${date}.`);
+    showNote(
+      `${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 일별 자산추이 ${book.dailyLog.length}일 · 월별 자산추이 ${Object.keys(monthly).length}개월${links.length ? ` · Summary 기말자산 ${fromMonth}부터 연결` : ''}.`,
+    );
   } catch (ex) {
     if ((ex as DOMException)?.name === 'AbortError') return;
     showNote(`엑셀을 저장하지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}. 엑셀에서 파일을 열어 두었다면 닫고 다시 시도하세요.`, true);

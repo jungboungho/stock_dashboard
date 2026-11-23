@@ -10,15 +10,34 @@ const monthEnd = (ym: string): ISODate => {
 
 export const bookUsdKrw = (book: ExcelBook) => book.holdings.usdKrw ?? book.usdKrw;
 
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
 /**
- * Summary 월별 기말자산 → 스냅샷. 기말자산이 비어 있는 달의 입금은 다음 스냅샷에 합쳐진다.
- * 보유종목(동기화 · 편집)이 있으면 그 합계를 기준일의 '현재' 값으로 쓴다 (그 달의 기말자산 대신).
+ * 자산 추이 스냅샷.
+ *  - 일별 기록(일별 자산추이 시트 + 지금 보유종목 합계)이 있는 달은 그 날짜들을 그대로 쓴다
+ *    (원금은 그달 입금내역을 날짜까지 더함)
+ *  - 없는 달은 Summary 기말자산(없으면 월별 자산추이 시트 값)을 월말 값으로 쓴다
+ *  - 기말자산이 빈 달의 입금은 다음 스냅샷에 합쳐진다
  */
 export function excelSnapshots(book: ExcelBook, today: ISODate): DailySnapshot[] {
   const h = book.holdings;
-  const liveDate = h.asOf && (h.rows.length || h.cash.length) ? (h.asOf.slice(0, 10) > today ? today : h.asOf.slice(0, 10)) : null;
-  const liveMonth = liveDate?.slice(0, 7);
-  const liveValue = liveDate ? holdingsTotal(h, bookUsdKrw(book)) : 0;
+  const points = new Map<string, number>();
+  for (const d of book.dailyLog ?? []) if (d.date <= today) points.set(d.date, d.total);
+  if (h.asOf && (h.rows.length || h.cash.length)) {
+    const live = h.asOf.slice(0, 10) > today ? today : h.asOf.slice(0, 10);
+    points.set(live, holdingsTotal(h, bookUsdKrw(book)));
+  }
+  const byMonth = new Map<string, [ISODate, number][]>();
+  for (const [date, value] of [...points].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const m = date.slice(0, 7);
+    byMonth.set(m, [...(byMonth.get(m) ?? []), [date, value]]);
+  }
+  const summary = new Map(book.months.map((m) => [m.month, m]));
+  const monthly = book.monthlyValues ?? {};
+  const todayMonth = today.slice(0, 7);
+  const months = [...new Set([...summary.keys(), ...byMonth.keys(), ...Object.keys(monthly)])].filter((m) => m <= todayMonth).sort();
+  const depositsIn = (month: string, upTo: string) => sum(book.deposits.filter((d) => d.date.startsWith(month) && d.date <= upTo).map((d) => sum(d.amounts)));
+  const hasDeposits = (month: string) => book.deposits.some((d) => d.date.startsWith(month));
 
   const out: DailySnapshot[] = [];
   let principal = 0;
@@ -41,28 +60,42 @@ export function excelSnapshots(book: ExcelBook, today: ISODate): DailySnapshot[]
     pending = 0;
   };
 
-  for (const m of book.months) {
-    if (liveMonth && m.month > liveMonth) break;
-    const flow = m.flows.reduce((a, b) => a + b, 0);
-    principal += flow;
-    pending += flow;
-    if (liveMonth && m.month === liveMonth) continue; // 현재 달은 아래에서 보유종목 합계로
-    if (m.endValue === null) continue;
-    const end = monthEnd(m.month);
-    push(end > today ? today : end, m.endValue);
+  for (const month of months) {
+    const m = summary.get(month);
+    const monthFlow = m ? sum(m.flows) : depositsIn(month, '9999-12-31');
+    const days = byMonth.get(month);
+    if (days?.length) {
+      const base = principal;
+      let counted = 0;
+      for (const [date, value] of days) {
+        const toDate = hasDeposits(month) ? depositsIn(month, date) : monthFlow;
+        pending += toDate - counted;
+        counted = toDate;
+        principal = base + toDate;
+        push(date, value);
+      }
+      pending += monthFlow - counted;
+      principal = base + monthFlow;
+      continue;
+    }
+    principal += monthFlow;
+    pending += monthFlow;
+    const end = m?.endValue ?? monthly[month] ?? null;
+    if (end === null) continue;
+    const last = monthEnd(month);
+    push(last > today ? today : last, end);
   }
-  if (liveDate) push(liveDate, liveValue);
   return out;
 }
 
 /** 엑셀(Summary · 입금내역 · 보유종목) → 화면 데이터. book.holdings 가 바뀌면 다시 계산한다 */
 export function makeExcelModel(book: ExcelBook, today: ISODate = new Date().toISOString().slice(0, 10)): DashboardData {
-  let cacheKey: unknown = null;
+  let cacheKey: unknown[] = [];
   let snaps: DailySnapshot[] = [];
   const snapshots = () => {
-    if (cacheKey !== book.holdings) {
+    if (cacheKey[0] !== book.holdings || cacheKey[1] !== book.dailyLog) {
       snaps = excelSnapshots(book, today);
-      cacheKey = book.holdings;
+      cacheKey = [book.holdings, book.dailyLog];
     }
     return snaps;
   };

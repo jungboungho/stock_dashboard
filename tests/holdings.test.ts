@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, unzipSync, zipSync } from 'fflate';
 import { JSDOM } from 'jsdom';
 import { applySync, emptyHoldings, holdingsTotal, quoteTargets, removeHolding, setCash, toPositions, upsertHolding, type HoldingRow } from '../src/data/holdings';
 import { upsertSheets } from '../src/data/excel/write';
 import { readWorkbook } from '../src/data/excel/xlsx';
-import { parseStockBook } from '../src/data/excel/parse';
-import { buildExportSheets, nextSnapshotLog } from '../src/data/excel/export';
+import { parseStockBook, summaryEndCells } from '../src/data/excel/parse';
+import { buildExportSheets, monthlyFromSheets, summaryLinkCells, upsertDaily } from '../src/data/excel/export';
 import { excelSnapshots } from '../src/data/excelModel';
 import { buildSync, mapGbStock, type TokenStore } from '../proxy/src/nh';
 
@@ -78,7 +78,7 @@ function baseXlsx(): Uint8Array {
   ]);
 }
 
-describe('엑셀 업데이트 (보유종목 · 그룹 · 자산스냅샷 시트)', () => {
+describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산추이 시트)', () => {
   it('시트를 추가하고, 다시 쓰면 같은 시트를 바꾼다 (다른 시트는 유지)', () => {
     const src = baseXlsx();
     const book = parseStockBook(readWorkbook(src), 'test.xlsx');
@@ -90,8 +90,8 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 자산스냅샷 시트)
     h = { ...h, asOf: '2026-11-23T10:00:00', usdKrw: 1400 };
     book.holdings = h;
     const groups = [{ name: '배당주', keys: ['SCHD'] }, { name: '채권', keys: [] }];
-    const log = nextSnapshotLog([{ date: '2026-11-01', account: '합계', value: 1 }], h, 1400, '2026-11-23');
-    const out1 = upsertSheets(src, buildExportSheets(book, groups, log));
+    book.dailyLog = upsertDaily([{ date: '2026-11-01', total: 1, accounts: { ISA: 1 } }], h, 1400, '2026-11-23');
+    const out1 = upsertSheets(src, buildExportSheets(book, groups, '2026-11-30'));
     const again = parseStockBook(readWorkbook(out1), 'test.xlsx');
     expect(again.months).toEqual(book.months); // Summary 그대로
     expect(again.deposits).toEqual(book.deposits);
@@ -103,14 +103,61 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 자산스냅샷 시트)
     expect(again.holdings.usdKrw).toBe(1400);
     expect(again.holdings.asOf?.slice(0, 10)).toBe('2026-11-23');
     expect(again.groups).toEqual(groups);
-    expect(again.snapshotLog.map((r) => r.account).sort()).toEqual(['ISA', '종합', '합계', '합계'].sort());
+    expect(again.dailyLog.map((d) => [d.date, d.total, d.accounts['종합'] ?? null])).toEqual([
+      ['2026-11-01', 1, null],
+      ['2026-11-23', 220_000 + 84_000 + 14_000, 98_000],
+    ]);
+    expect(again.monthlyValues).toEqual({ '2026-09': 160, '2026-10': 170, '2026-11': 318_000 });
 
     // 두 번째 업데이트: 시트가 늘지 않고 내용만 바뀜
     book.holdings = removeHolding(h, 'ISA', '360750');
-    const out2 = upsertSheets(out1, buildExportSheets(book, groups, log));
+    const out2 = upsertSheets(out1, buildExportSheets(book, groups, '2026-11-30'));
     const wb2 = readWorkbook(out2);
-    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '자산스냅샷']);
+    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '일별 자산추이', '월별 자산추이']);
     expect(parseStockBook(wb2).holdings.rows).toHaveLength(1);
+  });
+
+  it("예전 '자산스냅샷' 시트는 같은 자리에서 '일별 자산추이'로 바뀐다", () => {
+    const old = upsertSheets(baseXlsx(), [{ name: '자산스냅샷', rows: [['기준일', '계좌', '평가금액(원)'], ['2026-11-20', 'ISA', 100], ['2026-11-20', '합계', 100]] }, { name: '설정', rows: [['중계 서버 주소', 'https://x.dev']] }]);
+    const book = parseStockBook(readWorkbook(old), 'test.xlsx');
+    expect(book.dailyLog).toEqual([{ date: '2026-11-20', total: 100, accounts: { ISA: 100 } }]);
+    const out = upsertSheets(old, buildExportSheets(book, [], '2026-11-30'));
+    expect(Object.keys(readWorkbook(out))).toEqual(['Summary', '입금내역', '일별 자산추이', '설정', '보유종목', '그룹', '월별 자산추이']);
+  });
+
+  it('Summary 기말자산은 일별 기록이 시작된 달부터 월별 자산추이와 수식으로 연결', () => {
+    const src = baseXlsx();
+    const book = parseStockBook(readWorkbook(src), 'test.xlsx');
+    book.unit = 1;
+    book.dailyLog = [{ date: '2026-11-20', total: 300, accounts: { ISA: 300 } }];
+    const sheets = buildExportSheets(book, [], '2026-11-30');
+    const target = summaryEndCells(readWorkbook(src))!;
+    expect(target).toMatchObject({ sheet: 'Summary', col: 'E', rows: { '2026-09': 5, '2026-11': 7 } });
+    const links = summaryLinkCells(book, target, monthlyFromSheets(sheets), '2026-11');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ ref: 'E7', value: 300 });
+    expect(links[0].formula).toContain("INDEX('월별 자산추이'!$B:$B,MATCH(");
+    const out = upsertSheets(src, sheets, { sheet: target.sheet, updates: links });
+    const again = parseStockBook(readWorkbook(out), 'test.xlsx');
+    expect(again.months.map((m) => m.endValue)).toEqual([160, 170, 300]); // 이전 달은 그대로, 11월은 연결된 값
+    const xml = new TextDecoder().decode(unzipSync(out)['xl/worksheets/sheet1.xml']);
+    expect(xml).toContain('<c r="E7"><f>IFERROR(INDEX(');
+    expect(xml).toContain('<c r="E5"><v>160</v></c>');
+  });
+
+  it('일별 기록이 있는 달은 날짜별로, 원금은 그달 입금내역을 날짜까지 더한다', () => {
+    const book = parseStockBook(readWorkbook(baseXlsx()), 'test.xlsx');
+    book.dailyLog = [
+      { date: '2026-11-01', total: 172, accounts: {} },
+      { date: '2026-11-05', total: 190, accounts: {} },
+    ];
+    const s = excelSnapshots(book, '2026-11-30');
+    expect(s.map((x) => [x.date, x.value, x.principal, x.netFlow])).toEqual([
+      ['2026-09-30', 160, 150, 150],
+      ['2026-10-31', 170, 150, 0],
+      ['2026-11-01', 172, 150, 0],
+      ['2026-11-05', 190, 160, 10], // 11-02 입금 10
+    ]);
   });
 
   it('보유종목이 있으면 그 합계가 이번 달 값이 된다', () => {
