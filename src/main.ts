@@ -56,7 +56,7 @@ import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, type Instrument } from './data/instruments';
-import { dividendsFrom, mergeApiDividends, resolveCode } from './data/dividends';
+import { applyLedger, resolveCode } from './data/dividends';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -1212,13 +1212,13 @@ async function runSync() {
   showNote('NH 계좌 잔고와 현재가를 가져오는 중…');
   try {
     const book = excelBook;
-    const res = await fetchSync(settings, book.holdings, book.holdings.syncedAccounts, dividendsFrom(book.dividends));
+    const res = await fetchSync(settings, book.holdings, book.holdings.syncedAccounts);
     const next = applySync(book.holdings, res);
-    // NH 배당 입금: 받은 기간은 새 값으로, 직접 적은 기록은 그대로
+    // NH 배당: 중계 서버 장부(그날 환율로 원화금액 고정) 그대로, 직접 적은 기록은 유지
     let newDividends = 0;
-    if (res.dividends && res.dividendsFrom) {
+    if (res.dividends) {
       const list = await loadInstruments(settings).catch((): Instrument[] => []);
-      const merged = mergeApiDividends(book.dividends, res.dividends, res.accounts.map((a) => a.name), res.dividendsFrom, res.usdKrw ?? bookUsdKrw(book), (d) => resolveCode(d, next, list));
+      const merged = applyLedger(book.dividends, res.dividends, res.usdKrw ?? bookUsdKrw(book), (d) => resolveCode(d, next, list));
       book.dividends = merged.rows;
       newDividends = merged.added;
     }

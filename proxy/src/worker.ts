@@ -15,6 +15,10 @@ export default {
       // 공유 종목 목록 (같은 KV, 다른 키)
       get: () => env.TOKENS.get('instruments'),
       put: (v) => env.TOKENS.put('instruments', v),
+    }, {
+      // 배당 장부 (같은 KV, 다른 키)
+      get: () => env.TOKENS.get('dividends'),
+      put: (v) => env.TOKENS.put('dividends', v),
     });
   },
 };

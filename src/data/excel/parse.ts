@@ -429,7 +429,7 @@ export function parseDaily(book: Workbook): DailyRow[] {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-/** '배당' 시트: 날짜 · 계좌 · 종목코드 · 종목명 · 통화 · 금액 · 원화금액 · 출처 (출처가 비면 '직접') */
+/** '배당' 시트: 날짜 · 계좌 · 종목코드 · 종목명 · 통화 · 금액 · 환율 · 원화금액 · 출처 (출처가 비면 '직접') */
 export function parseDividends(book: Workbook, usdKrw: number): DividendEntry[] {
   const out: DividendEntry[] = [];
   for (const r of table(findSheet(book, DIVIDEND_SHEET), ['날짜', '계좌', '금액'])) {
@@ -438,8 +438,9 @@ export function parseDividends(book: Workbook, usdKrw: number): DividendEntry[] 
     const amount = num(r['금액']);
     if (!date || !account || amount === undefined || amount === 0) continue;
     const currency = currencyOf(r['통화']);
-    const krw = num(r['원화금액']) ?? Math.round(amount * (currency === 'USD' ? usdKrw : 1));
-    out.push({ date, account, code: str(r['종목코드']).toUpperCase(), name: str(r['종목명']), currency, amount, krw, source: str(r['출처']).toUpperCase() === 'API' ? 'API' : '직접' });
+    const fx = currency === 'USD' ? (num(r['환율']) ?? null) : 1;
+    const krw = num(r['원화금액']) ?? Math.round(amount * (currency === 'USD' ? (fx ?? usdKrw) : 1));
+    out.push({ date, account, code: str(r['종목코드']).toUpperCase(), name: str(r['종목명']), currency, amount, fx, krw, source: str(r['출처']).toUpperCase() === 'API' ? 'API' : '직접' });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }

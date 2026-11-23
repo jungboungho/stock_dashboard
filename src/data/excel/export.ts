@@ -104,10 +104,10 @@ export function buildExportSheets(book: ExcelBook, groups: ExcelGroup[], today =
     },
     {
       name: DIVIDEND_SHEET,
-      widths: [11, 8, 14, 30, 6, 12, 12, 6],
+      widths: [11, 8, 14, 30, 6, 12, 10, 12, 6],
       rows: [
-        ['날짜', '계좌', '종목코드', '종목명', '통화', '금액', '원화금액', '출처'],
-        ...book.dividends.map((d) => [d.date, d.account, d.code, d.name, d.currency, d.amount, d.krw, d.source]),
+        ['날짜', '계좌', '종목코드', '종목명', '통화', '금액', '환율', '원화금액', '출처'],
+        ...book.dividends.map((d) => [d.date, d.account, d.code, d.name, d.currency, d.amount, d.currency === 'USD' ? d.fx : null, d.krw, d.source]),
       ],
     },
     {

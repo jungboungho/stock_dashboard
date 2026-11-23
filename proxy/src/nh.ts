@@ -39,14 +39,29 @@ export interface DividendRow {
   name: string;
   currency: Currency;
   amount: number;
+  /** 그날 USD/KRW (원화 배당은 1). NH 환율 일별 시세(KRW)의 그날 · 없으면 직전 영업일 값 */
+  fx: number;
+  /** 원화 환산액 = amount × fx (한 번 정하면 고정) */
+  krw: number;
+}
+
+/** 중계 서버에 쌓아 두는 배당 장부 (KV 'dividends') */
+export interface DividendLedger {
+  updatedAt: string;
+  rows: DividendRow[];
+}
+export interface LedgerStore {
+  get(): Promise<string | null>;
+  put(value: string): Promise<void>;
 }
 export interface SyncResult {
   asOf: string;
   usdKrw: number | null;
   accounts: SyncAccount[];
   prices: Record<string, number>;
-  /** dividendsFrom 부터 오늘까지 NH 계좌의 배당 입금 */
+  /** 중계 서버 배당 장부 전체 (NH 계좌) */
   dividends: DividendRow[];
+  /** 이번에 다시 받은 시작일 (장부 최신일 − 14일, 처음이면 2년 전) */
   dividendsFrom: string | null;
   warnings: string[];
 }
@@ -193,7 +208,7 @@ export function mapGold(account: string, r: Json): { rows: HoldingRow[]; cash: n
 }
 
 /** 종합거래내역 → 배당 입금 (적요에 '배당' · '분배'가 든 입금: 외화배당금입금, 소수점해외배당금, 배당금입금 …) */
-export function mapDividends(account: string, txs: Json[], tickerByName: Map<string, string>): DividendRow[] {
+export function mapDividends(account: string, txs: Json[], tickerByName: Map<string, string>): Omit<DividendRow, 'fx' | 'krw'>[] {
   return txs
     .filter((t) => /배당|분배/.test(s(t.sps_cd_krl_anm)) && !/세|환급|출금/.test(s(t.sps_cd_krl_anm)) && n(t.trd_amt) > 0)
     .map((t) => {
@@ -206,15 +221,53 @@ export function mapDividends(account: string, txs: Json[], tickerByName: Map<str
         name,
         currency: s(t.cur_cd) === 'USD' ? 'USD' : 'KRW',
         amount: Math.round(n(t.trd_amt) * 100) / 100,
-      } as DividendRow;
+      } as Omit<DividendRow, 'fx' | 'krw'>;
     });
 }
 
 const ymd = (d: string) => d.replace(/-/g, '');
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+/** 장부의 최신일 − 14일 (늦게 들어오는 입금 대비), 비어 있으면 2년 전 */
+export function ledgerFrom(rows: DividendRow[], today: string): string {
+  const last = rows.reduce((m, r) => (r.date > m ? r.date : m), '');
+  const d = new Date(`${last || today}T00:00:00Z`);
+  if (last) d.setUTCDate(d.getUTCDate() - 14);
+  else d.setUTCFullYear(d.getUTCFullYear() - 2);
+  return iso(d);
+}
+
+/** 그날 환율, 없으면(휴일) 직전 영업일 */
+export function fxOn(date: string, fx: Map<string, number>): number | null {
+  const d = new Date(`${date}T00:00:00Z`);
+  for (let i = 0; i < 10; i++) {
+    const v = fx.get(iso(d));
+    if (v) return v;
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return null;
+}
+
+/**
+ * 장부에 합치기: 이번에 받은 계좌 · 기간(from 이후)은 새로 받은 것으로 바꾸고,
+ * 예전에 같은 배당(날짜 · 계좌 · 종목 · 금액)이 있었으면 그때 정한 환율 · 원화금액을 그대로 쓴다.
+ */
+export function mergeLedger(old: DividendRow[], fresh: Omit<DividendRow, 'fx' | 'krw'>[], accounts: string[], from: string, fx: Map<string, number>, fallbackFx: number | null): DividendRow[] {
+  const key = (r: { date: string; account: string; name: string; amount: number }) => `${r.date}|${r.account}|${r.name}|${r.amount}`;
+  const fixed = new Map(old.map((r) => [key(r), r]));
+  const keep = old.filter((r) => !(accounts.includes(r.account) && r.date >= from));
+  const added = fresh.map((r): DividendRow => {
+    const prev = fixed.get(key(r));
+    if (prev) return { ...r, fx: prev.fx, krw: prev.krw };
+    const rate = r.currency === 'USD' ? (fxOn(r.date, fx) ?? fallbackFx ?? 0) : 1;
+    return { ...r, fx: rate, krw: Math.round(r.amount * rate) };
+  });
+  return [...keep, ...added].sort((a, b) => a.date.localeCompare(b.date) || a.account.localeCompare(b.account) || a.name.localeCompare(b.name));
+}
 
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
 
-export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[], dividendsFrom: string | null = null): Promise<SyncResult> {
+export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[], ledger: LedgerStore | null = null): Promise<SyncResult> {
   const nh = new NhClient(cfg);
   const warnings: string[] = [];
   const map = parseAccountMap(cfg.accounts);
@@ -222,8 +275,19 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   const live = rows(info, 'Output_0').filter((a) => s(a.acct_type) === '01' || s(a.acct_type) === '02');
   let usdKrw: number | null = null;
   const accounts: SyncAccount[] = [];
-  const dividends: DividendRow[] = [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = iso(new Date());
+  // 배당 장부: 최신일 − 14일부터 다시 받는다
+  let book: DividendRow[] = [];
+  if (ledger) {
+    try {
+      book = (JSON.parse((await ledger.get()) ?? 'null') as DividendLedger | null)?.rows ?? [];
+    } catch {
+      book = [];
+    }
+  }
+  const dividendsFrom = ledger ? ledgerFrom(book, today) : null;
+  const fresh: Omit<DividendRow, 'fx' | 'krw'>[] = [];
+  const fetchedAccounts: string[] = [];
 
   for (const { suffix, name } of map) {
     const acct = live.find((a) => s(a.acct_no).endsWith(suffix));
@@ -253,7 +317,8 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
           iqr_tp_cd: '1', iqr_rge_cd: '1', act_no, iqr_sta_dt: ymd(dividendsFrom), iqr_end_dt: ymd(today), iem_llf_cd: '00', act_trd_dtl_cd: '00',
         });
         const tickerByName = new Map([...k.rows, ...g.rows].map((r) => [r.name, r.code]));
-        dividends.push(...mapDividends(name, txs, tickerByName));
+        fresh.push(...mapDividends(name, txs, tickerByName));
+        fetchedAccounts.push(name);
       } catch (e) {
         warnings.push(`${name} 배당 내역: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -279,5 +344,24 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     }
   }
 
-  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends, dividendsFrom, warnings };
+  // 달러 배당의 그날 환율 (NH 환율 일별 시세 'KRW' = USD/KRW, 최신일부터 거꾸로)
+  if (ledger && dividendsFrom) {
+    const fx = new Map<string, number>();
+    if (fresh.some((r) => r.currency === 'USD')) {
+      try {
+        const days = Math.min(1000, Math.ceil((Date.parse(today) - Date.parse(dividendsFrom)) / 86_400_000) + 15);
+        const r = await nh.call('/gbstock/quote/v1/symbolIndexFxPeriod', { iem_cd: 'KRW', end_dt: ymd(today), array_cnt: String(days), maxavg: '0', gubun: '1', xtick: '001', today_cls: '0', scale_change: '0' });
+        for (const x of rows(r, 'Output_1')) {
+          const d = s(x.bsop_date);
+          if (d.length === 8 && n(x.ovrs_prpr)) fx.set(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`, n(x.ovrs_prpr));
+        }
+      } catch (e) {
+        warnings.push(`배당 환율: ${e instanceof Error ? e.message : String(e)} (오늘 환율로 계산)`);
+      }
+    }
+    book = mergeLedger(book, fresh, fetchedAccounts, dividendsFrom, fx, usdKrw);
+    await ledger.put(JSON.stringify({ updatedAt: new Date().toISOString(), rows: book } satisfies DividendLedger));
+  }
+
+  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends: book, dividendsFrom, warnings };
 }

@@ -1,4 +1,4 @@
-import { buildSync, parseAccountMap, type Currency, type TokenStore } from './nh';
+import { buildSync, parseAccountMap, type Currency, type LedgerStore, type TokenStore } from './nh';
 
 // 중계 서버 공통 처리 (Cloudflare Worker · 로컬 개발 서버가 같이 씀)
 //  GET  /health  → 설정된 계좌 이름 (NH 호출 없음)
@@ -48,7 +48,7 @@ function safeEqual(a: string, b: string): boolean {
   return d === 0;
 }
 
-export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore, list?: ListStore): Promise<Response> {
+export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore, list?: ListStore, ledger?: LedgerStore): Promise<Response> {
   // 비밀값을 넣을 때 따라 들어온 줄바꿈 · 공백 제거
   const t = (v: string | undefined) => (v ?? '').trim();
   const env: ProxyEnv = { ...rawEnv, NH_APP_KEY: t(rawEnv.NH_APP_KEY), NH_APP_SECRET: t(rawEnv.NH_APP_SECRET), NH_ACCOUNTS: t(rawEnv.NH_ACCOUNTS), PROXY_TOKEN: t(rawEnv.PROXY_TOKEN) };
@@ -65,10 +65,9 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore,
       return json({ ok: true, accounts: parseAccountMap(env.NH_ACCOUNTS ?? '').map((a) => a.name) });
     }
     if (req.method === 'POST' && path === '/sync') {
-      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[]; dividendsFrom?: string };
-      const dividendsFrom = /^\d{4}-\d{2}-\d{2}$/.test(body.dividendsFrom ?? '') ? body.dividendsFrom! : null;
+      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[] };
       const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 60);
-      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes, dividendsFrom);
+      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes, ledger ?? null);
       return json(result);
     }
     if (path === '/instruments' && list) {

@@ -58,10 +58,9 @@ createServer(async (req, res) => {
     body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
   });
   const listFile = resolve(root, 'local-data', 'instruments-shared.json');
-  const response = await handle(request, env, tokens, {
-    get: async () => (existsSync(listFile) ? readFileSync(listFile, 'utf8') : null),
-    put: async (v) => writeFileSync(listFile, v),
-  });
+  const ledgerFile = resolve(root, 'local-data', 'dividends-ledger.json');
+  const fileStore = (f: string) => ({ get: async () => (existsSync(f) ? readFileSync(f, 'utf8') : null), put: async (v: string) => writeFileSync(f, v) });
+  const response = await handle(request, env, tokens, fileStore(listFile), fileStore(ledgerFile));
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(Buffer.from(await response.arrayBuffer()));
   console.log(new Date().toISOString().slice(11, 19), req.method, req.url, response.status);
