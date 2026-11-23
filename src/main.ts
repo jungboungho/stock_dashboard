@@ -452,7 +452,7 @@ function buildSourceControls() {
   $('sync-state').textContent = loadSyncSettings()
     ? `NH 계좌 잔고 · 모든 종목 현재가${synced ? ` · 마지막 ${timeLabel(synced)}` : ''}`
     : '먼저 "동기화 설정"에서 중계 서버를 연결하세요';
-  $('export-state').textContent = excelHandle ? `${excelHandle.name}에 바로 저장` : '보유종목 · 그룹 · 자산스냅샷 시트를 넣은 엑셀 파일 저장';
+  $('export-state').textContent = excelHandle ? `${excelHandle.name}에 바로 저장` : '보유종목 · 그룹 · 일별 / 월별 자산추이 시트를 넣은 엑셀 파일 저장';
 
   const accSeg = $('account-seg');
   accSeg.hidden = !model.accountFilter;
