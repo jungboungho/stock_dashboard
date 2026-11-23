@@ -34,18 +34,10 @@ export interface YearStart {
   flow: number;
 }
 
-export interface ClosedTrade {
-  currency: Currency;
-  name: string;
-  quantity: number;
-  buyPrice: number;
-  sellPrice: number;
-  returnRate: number;
-  profitKRW: number;
-  buyDate?: ISODate;
-  sellDate?: ISODate;
-  buyNote?: string;
-  sellNote?: string;
+/** 계좌별 입출금 기록 (음수 = 출금 · 계좌 간 이체로 빠져나감) */
+export interface DepositData {
+  accounts: string[];
+  rows: { date: ISODate; amounts: number[] }[];
 }
 
 export interface AccountInfo {
@@ -63,6 +55,8 @@ export interface Dimension {
 export interface DashboardData {
   source: 'dummy' | 'excel' | 'mydata';
   sourceLabel: string;
+  /** 데이터를 마지막으로 받아온 시각 (ISO) */
+  updatedAt?: string;
   asOf: ISODate;
   accounts: AccountInfo[];
   /** 계좌별로 평가금을 나눠 볼 수 있는지 */
@@ -80,7 +74,7 @@ export interface DashboardData {
   dividends(accountIds: string[]): Transaction[];
   /** 연도별 연초 자산 · 순입금을 원본이 직접 가지고 있으면 그 값을 쓴다 (엑셀 Summary) */
   yearStarts?: YearStart[];
-  closedTrades?: ClosedTrade[];
+  deposits?: DepositData;
   /** 그룹 기본값을 만들 때 쓰는 힌트 */
   defaultGroups?: { name: string; match: (p: Position) => boolean }[];
 }

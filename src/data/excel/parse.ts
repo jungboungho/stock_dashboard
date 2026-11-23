@@ -6,23 +6,17 @@ import type { ISODate } from '../../types';
  * 사용자가 관리하던 '주식.xlsx' 구조를 읽어 앱 데이터로 바꾼다.
  *
  * Summary        : 계좌별 원금 · 목표 · 단위, 년도 표(연초 총자산 · 연중 변경), 월별 표(계좌별 입금 · 기말자산)
- * 투자내역        : 종목별 매수 · 매도 기록 (판매가격 · 판매날짜가 없으면 보유 중)
- * 해외주식리스트   : 달러 종목 이름, 환율
+ * 입금내역        : 날짜별 · 계좌별 입금 (음수 = 출금 · 계좌 간 이체)
+ * 해외주식리스트   : 환율 (직접 추가한 달러 종목 환산에만 사용)
  *
- * 셀 위치가 아니라 머리글 글자('년도', '날짜', '기말자산', '종목' ...)로 표를 찾으므로 행이 늘어나도 동작한다.
+ * 투자내역 시트는 최신이 아니어서 읽지 않는다 (보유 종목은 마이데이터 동기화로 채움).
+ * 셀 위치가 아니라 머리글 글자('년도', '날짜', '기말자산' ...)로 표를 찾으므로 행이 늘어나도 동작한다.
  */
 
-export interface ExcelLot {
-  name: string;
-  quantity: number;
-  buyPrice: number;
-  sellPrice?: number;
-  returnRate?: number;
-  profitKRW?: number;
-  buyDate?: ISODate;
-  sellDate?: ISODate;
-  buyNote?: string;
-  sellNote?: string;
+export interface ExcelDeposit {
+  date: ISODate;
+  /** depositAccounts 순서대로 금액 (원) */
+  amounts: number[];
 }
 
 export interface ExcelMonth {
@@ -34,7 +28,7 @@ export interface ExcelMonth {
 }
 
 export interface ExcelBook {
-  version: 1;
+  version: 2;
   fileName: string;
   importedAt: string;
   unit: number;
@@ -43,8 +37,9 @@ export interface ExcelBook {
   accounts: { id: string; name: string; principal: number }[];
   yearStarts: YearStart[];
   months: ExcelMonth[];
-  lots: ExcelLot[];
-  foreign: string[];
+  /** 입금내역 머리글 (종합 · ISA · 금계좌 · 연금1 · 연금2 · IRP ...) */
+  depositAccounts: string[];
+  deposits: ExcelDeposit[];
 }
 
 // ─── 셀 도우미 ────────────────────────────────────────────────
@@ -100,10 +95,13 @@ function toMonth(v: unknown): string | undefined {
   return m ? `${m[1]}-${m[2].padStart(2, '0')}` : undefined;
 }
 
-function toDate(v: unknown): ISODate | undefined {
+/** 엑셀 날짜 · '2025-01-24' · '~23 / 2 / 9'(23년 2월 9일까지 잔고) 를 날짜로 */
+export function toDate(v: unknown): ISODate | undefined {
   if (typeof v === 'number' && v > 20000) return serialToIso(v);
-  const m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/.exec(str(v));
-  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : undefined;
+  const m = /(\d{2,4})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/.exec(str(v));
+  if (!m) return undefined;
+  const y = m[1].length === 2 ? `20${m[1]}` : m[1];
+  return `${y}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
 }
 
 /** 머리글 행에서 글자 → 열 번호 */
@@ -195,17 +193,37 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
   }
   months.sort((a, b) => a.month.localeCompare(b.month));
 
-  // 해외주식리스트
-  const foreign: string[] = [];
+  // 입금내역
+  const depositAccounts: string[] = [];
+  const deposits: ExcelDeposit[] = [];
+  const dsheet = findSheet(book, '입금내역');
+  if (dsheet) {
+    const dg = grid(dsheet);
+    const header = findRow(dg, (r) => str(dg.get('A', r)) === '날짜');
+    if (header !== undefined) {
+      const cols: number[] = [];
+      for (let c = 2; c <= dg.maxCol; c++) {
+        const h = str(dg.get(c, header));
+        if (!h) continue;
+        cols.push(c);
+        depositAccounts.push(h);
+      }
+      for (const r of dg.rows.filter((x) => x > header)) {
+        const date = toDate(dg.get('A', r));
+        if (!date) continue;
+        const amounts = cols.map((c) => (num(dg.get(c, r)) ?? 0) * unit);
+        if (amounts.every((a) => a === 0)) continue;
+        deposits.push({ date, amounts });
+      }
+      deposits.sort((a, b) => a.date.localeCompare(b.date));
+    }
+  }
+
+  // 환율 (해외주식리스트의 '환율' 아래 칸)
   let usdKrw = 1400;
   const fsheet = findSheet(book, '해외주식리스트');
   if (fsheet) {
     const fg = grid(fsheet);
-    for (const r of fg.rows) {
-      if (r === 1) continue;
-      const n = str(fg.get('A', r));
-      if (n) foreign.push(n);
-    }
     for (const r of fg.rows) {
       for (let c = 1; c <= fg.maxCol; c++) {
         if (str(fg.get(c, r)) === '환율') usdKrw = num(fg.get(c, r + 1)) ?? usdKrw;
@@ -213,43 +231,5 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
     }
   }
 
-  // 투자내역
-  const lots: ExcelLot[] = [];
-  const tsheet = findSheet(book, '투자내역');
-  if (tsheet) {
-    const tg = grid(tsheet);
-    const header = findRow(tg, (r) => str(tg.get('A', r)) === '종목');
-    if (header !== undefined) {
-      const h = headerMap(tg, header);
-      const col = (name: string) => h.get(name);
-      const val = (name: string, r: number) => {
-        const c = col(name);
-        return c ? tg.get(c, r) : undefined;
-      };
-      for (const r of tg.rows.filter((x) => x > header)) {
-        const name = str(tg.get('A', r));
-        const quantity = num(val('개수', r));
-        const buyPrice = num(val('구매가격', r));
-        if (!name || !quantity || buyPrice === undefined) continue;
-        const sellPrice = num(val('판매가격', r));
-        lots.push({
-          name,
-          quantity,
-          buyPrice,
-          ...(sellPrice !== undefined ? { sellPrice } : {}),
-          ...(num(val('수익률', r)) !== undefined ? { returnRate: num(val('수익률', r)) } : {}),
-          ...(num(val('수익금액', r)) !== undefined ? { profitKRW: num(val('수익금액', r)) } : {}),
-          ...(toDate(val('구매날짜', r)) ? { buyDate: toDate(val('구매날짜', r)) } : {}),
-          ...(toDate(val('판매날짜', r)) ? { sellDate: toDate(val('판매날짜', r)) } : {}),
-          ...(str(val('구매노트', r)) ? { buyNote: str(val('구매노트', r)) } : {}),
-          ...(str(val('판매노트', r)) ? { sellNote: str(val('판매노트', r)) } : {}),
-        });
-      }
-    }
-  }
-
-  return { version: 1, fileName, importedAt: new Date().toISOString(), unit, goal, usdKrw, accounts, yearStarts, months, lots, foreign };
+  return { version: 2, fileName, importedAt: new Date().toISOString(), unit, goal, usdKrw, accounts, yearStarts, months, depositAccounts, deposits };
 }
-
-/** 판매가격도 판매날짜도 없으면 아직 보유 중 */
-export const isOpenLot = (l: ExcelLot) => l.sellPrice === undefined && l.sellDate === undefined;

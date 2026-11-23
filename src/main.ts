@@ -32,12 +32,14 @@ import {
   type MemberRow,
 } from './domain/groups';
 import { yearlyReturns } from './domain/yearly';
+import { mydataStatus, syncMyData } from './data/sync';
 import type { Currency, DailySnapshot } from './types';
 import { arrow, escapeHtml, number, pct, pctSigned, tone, won, wonShort, wonSigned } from './format';
 import {
   applyChartDefaults,
   renderCompare,
   renderDividends,
+  renderDepositChart,
   renderDonut,
   renderTrend,
   renderYtd,
@@ -51,7 +53,6 @@ import { openConfirm, openForm, parseNumber } from './ui/dialog';
 // ─── 상태 ────────────────────────────────────────────────────
 
 const EXCEL_KEY = 'stock-dashboard:excel:v1';
-const SOURCE_KEY = 'stock-dashboard:source';
 const CUSTOM = 'custom';
 
 interface State {
@@ -74,7 +75,7 @@ let store: GroupStore;
 let state: State;
 let snaps: DailySnapshot[] = [];
 let dimColorOrder: Record<string, string[]> = {};
-const charts: { trend?: TrendCharts; compare?: AnyChart; donut?: AnyChart; div?: AnyChart; ytd?: AnyChart } = {};
+const charts: { trend?: TrendCharts; compare?: AnyChart; donut?: AnyChart; div?: AnyChart; ytd?: AnyChart; dep?: AnyChart } = {};
 
 const allIds = () => model.accounts.map((a) => a.id);
 const accountIds = () => (state.accountKey === 'ALL' ? allIds() : [state.accountKey]);
@@ -90,8 +91,11 @@ function positions(): Position[] {
   return state.accountKey === 'ALL' ? ps : ps.filter((p) => !p.manual);
 }
 
+/** 그룹 설정 저장 위치: 내 데이터(엑셀 → 마이데이터로 바뀌어도 유지)와 샘플을 나눈다 */
+const storeKey = () => (model.source === 'dummy' ? 'dummy' : 'mine');
+
 function persist() {
-  saveStore(model.source, store);
+  saveStore(storeKey(), store);
 }
 
 // ─── 시작 ────────────────────────────────────────────────────
@@ -100,14 +104,8 @@ async function main() {
   restoreTheme();
   dummyModel = makeDummyModel(await loadPortfolio(new DummyProvider()));
   excelBook = loadExcel();
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem(SOURCE_KEY);
-  } catch {
-    /* 무시 */
-  }
   buildControls();
-  setSource(excelBook && saved !== 'dummy' ? 'excel' : 'dummy');
+  setModel(excelBook ? makeExcelModel(excelBook) : dummyModel);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 }
 
@@ -115,21 +113,16 @@ function loadExcel(): ExcelBook | null {
   try {
     const raw = localStorage.getItem(EXCEL_KEY);
     const book = raw ? (JSON.parse(raw) as ExcelBook) : null;
-    return book?.version === 1 ? book : null;
+    return book?.version === 2 ? book : null;
   } catch {
     return null;
   }
 }
 
-function setSource(src: 'dummy' | 'excel') {
-  model = src === 'excel' && excelBook ? makeExcelModel(excelBook) : dummyModel;
-  try {
-    localStorage.setItem(SOURCE_KEY, model.source);
-  } catch {
-    /* 무시 */
-  }
+function setModel(next: DashboardData) {
+  model = next;
   const all = model.positions(model.accounts.map((a) => a.id));
-  store = loadStore(model.source) ?? seedStore(all, model.defaultGroups);
+  store = loadStore(storeKey()) ?? seedStore(all, model.defaultGroups, all.length === 0);
   persist();
 
   // 기본 그룹 기준의 색 순서를 전체 계좌 기준으로 고정 (필터를 바꿔도 같은 그룹은 같은 색)
@@ -227,26 +220,62 @@ function buildControls() {
     renderAll();
   });
 
+  // 동기화 메뉴
+  const menu = $('sync-menu');
+  const btn = $('sync-btn');
+  const setMenu = (open: boolean) => {
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) (menu.querySelector('button') as HTMLElement | null)?.focus();
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setMenu(menu.hidden);
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !menu.contains(e.target as Node)) setMenu(false);
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll<HTMLButtonElement>('button:not([hidden])')];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === 'Escape') {
+      setMenu(false);
+      btn.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+    }
+  });
+  $('menu-sync').addEventListener('click', () => {
+    setMenu(false);
+    dialogSync();
+  });
+  $('menu-excel').addEventListener('click', () => {
+    setMenu(false);
+    $<HTMLInputElement>('excel-input').click();
+  });
+  $('menu-clear').addEventListener('click', () => {
+    setMenu(false);
+    confirmClearData();
+  });
+
   $<HTMLInputElement>('excel-input').addEventListener('change', async (e) => {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file) return;
-    const label = $('excel-label');
-    label.textContent = '읽는 중…';
+    showNote('엑셀을 읽는 중…');
     try {
       const book = parseStockBook(readWorkbook(new Uint8Array(await file.arrayBuffer())), file.name);
       excelBook = book;
       try {
         localStorage.setItem(EXCEL_KEY, JSON.stringify(book));
       } catch {
-        showNote('브라우저 저장 공간에 저장하지 못해 새로고침하면 다시 가져와야 합니다.');
+        showNote('브라우저 저장 공간에 저장하지 못해 새로고침하면 다시 불러와야 합니다.');
       }
-      setSource('excel');
+      setModel(makeExcelModel(book));
     } catch (ex) {
       showNote(`엑셀을 읽지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true);
-    } finally {
-      label.textContent = excelBook ? '엑셀 다시 가져오기' : '엑셀 가져오기';
     }
   });
 
@@ -283,25 +312,20 @@ function buildControls() {
     if (act === 'down-group' && group) mutate(() => moveGroup(store, group, 1));
     if (act === 'add-to-group' && group) dialogAddToGroup(group);
     if (act === 'new-stock-in-group' && group) dialogManualStock(group);
-    if (act === 'clear-excel') confirmClearExcel();
   });
 }
 
 function buildSourceControls() {
-  const seg = $('source-seg');
-  seg.hidden = !excelBook;
-  if (excelBook) {
-    segButtons(
-      seg,
-      [
-        { id: 'excel', label: '내 엑셀' },
-        { id: 'dummy', label: '더미' },
-      ],
-      (id) => setSource(id as 'dummy' | 'excel'),
-    );
-    pressed(seg, model.source);
-  }
-  $('excel-label').textContent = excelBook ? '엑셀 다시 가져오기' : '엑셀 가져오기';
+  const updated = model.updatedAt ? `${model.updatedAt.slice(0, 10)} 업데이트` : '';
+  $('asof').textContent = [
+    model.source === 'dummy' ? '샘플 데이터' : model.sourceLabel,
+    `${model.asOf} 기준`,
+    updated,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  $('menu-clear').hidden = model.source === 'dummy';
+  $('sync-state').textContent = mydataStatus().configured ? '계좌 · 보유 종목 · 현재가 · 입출금' : '준비 중 — 중계 서버 연결 후 사용';
 
   const accSeg = $('account-seg');
   accSeg.hidden = !model.accountFilter;
@@ -314,30 +338,17 @@ function buildSourceControls() {
       else renderAll();
     });
   }
-  const chips = $('account-chips');
-  const withPrincipal = model.accounts.filter((a) => a.principal !== undefined);
-  chips.innerHTML =
-    !model.accountFilter && withPrincipal.length
-      ? `<span class="hint">계좌별 투자 원금</span>${withPrincipal
-          .map((a) => `<span class="chip lg">${escapeHtml(a.name)} <b class="num">${wonShort(a.principal!)}</b></span>`)
-          .join('')}`
-      : '';
 
-  if (model.source === 'excel' && excelBook) {
-    showNote(
-      `'${escapeHtml(excelBook.fileName)}' 데이터 (${excelBook.importedAt.slice(0, 10)} 가져옴). 이 브라우저에만 저장되며 어디에도 전송되지 않습니다. ` +
-        `<button type="button" class="link" data-act="clear-excel">이 브라우저에서 지우기</button>`,
-      false,
-      true,
-    );
+  if (model.source === 'dummy') {
+    showNote('샘플 데이터입니다. 오른쪽 위 "마이데이터 동기화" 메뉴에서 내 데이터를 불러오면 실제 값으로 바뀝니다.');
   } else {
-    showNote('가상 데이터입니다. 오른쪽 위 "엑셀 가져오기"로 내 엑셀(주식.xlsx)을 불러오면 실제 값으로 바뀝니다 — 파일은 브라우저 안에서만 읽습니다.', false);
+    $('source-note').hidden = true;
   }
 
   $('foot').textContent =
-    model.source === 'excel'
-      ? '엑셀에 현재가가 없어 보유 종목은 매입가 기준입니다. 종목의 ✎ 버튼으로 현재가를 입력하면 비중 · 손익에 반영됩니다.'
-      : '가상 데이터입니다. 종목 이름만 실제이고 가격 · 거래 · 배당은 모두 임의로 생성했습니다. 투자 판단의 근거로 쓰지 마세요.';
+    model.source === 'dummy'
+      ? '샘플 데이터는 종목 이름만 실제이고 가격 · 거래 · 배당은 모두 임의 값입니다.'
+      : '불러온 데이터는 이 브라우저에만 저장되며 어디에도 전송되지 않습니다.';
 }
 
 function showNote(html: string, error = false, raw = false) {
@@ -380,6 +391,7 @@ function renderAll() {
   renderKpis();
   renderTrendSection();
   renderYearly();
+  renderDeposits();
   renderAllocation();
   renderDividendSection();
   renderHoldings();
@@ -543,6 +555,83 @@ function renderYearly() {
   $('ytd-note').textContent = noMonthly.length ? `${noMonthly.join(', ')}년은 월별 자산 기록이 없어 연간 수익률만 표에 표시합니다.` : '';
 }
 
+// ─── 계좌별 입금 ─────────────────────────────────────────────
+
+function renderDeposits() {
+  const dep = model.deposits;
+  const card = $('deposit-card');
+  card.hidden = !dep || !dep.rows.length;
+  if (!dep || !dep.rows.length) {
+    charts.dep?.destroy();
+    charts.dep = undefined;
+    return;
+  }
+  const { rangeA } = state;
+  const n = dep.accounts.length;
+  const sumBy = (rows: typeof dep.rows) => {
+    const t = Array(n).fill(0) as number[];
+    for (const r of rows) r.amounts.forEach((a, i) => (t[i] += a));
+    return t;
+  };
+  const totals = sumBy(dep.rows);
+  const inRange = dep.rows.filter((r) => r.date >= rangeA.start && r.date <= rangeA.end);
+  const rangeTotals = sumBy(inRange);
+  const year = model.asOf.slice(0, 4);
+  const yearTotal = sumBy(dep.rows.filter((r) => r.date.startsWith(year))).reduce((a, b) => a + b, 0);
+  const grand = totals.reduce((a, b) => a + b, 0);
+  const lastIn = (i: number) => [...dep.rows].reverse().find((r) => r.amounts[i] !== 0)?.date ?? '-';
+  const color = (i: number) => (i < 8 ? token(`--series-${i + 1}`) : token('--series-other'));
+  const latest = dep.rows.at(-1)!;
+  const latestSum = latest.amounts.reduce((a, b) => a + b, 0);
+
+  $('dep-kpis').innerHTML = [
+    { label: '누적 순입금', value: won(grand) },
+    { label: `${year}년 순입금`, value: wonSigned(yearTotal) },
+    { label: '선택 기간 순입금', value: wonSigned(rangeTotals.reduce((a, b) => a + b, 0)) },
+    { label: `최근 기록 (${latest.date})`, value: wonSigned(latestSum) },
+  ]
+    .map((k) => `<div><div class="label">${k.label}</div><div class="value">${k.value}</div></div>`)
+    .join('');
+
+  $('dep-table').innerHTML = `<thead><tr><th>계좌</th><th>누적 순입금</th><th>비중</th><th>선택 기간</th><th>마지막 입금</th></tr></thead>
+    <tbody>${dep.accounts
+      .map(
+        (a, i) => `<tr>
+          <td><span class="name"><span class="swatch" style="background:${color(i)}"></span>${escapeHtml(a)}</span></td>
+          <td>${won(totals[i])}</td>
+          <td>${grand ? pct(totals[i] / grand, 1) : '-'}</td>
+          <td>${rangeTotals[i] ? wonSigned(rangeTotals[i]) : '-'}</td>
+          <td>${lastIn(i)}</td></tr>`,
+      )
+      .join('')}</tbody>
+    <tfoot><tr><td>합계</td><td>${won(grand)}</td><td>100%</td><td>${wonSigned(rangeTotals.reduce((a, b) => a + b, 0))}</td><td></td></tr></tfoot>`;
+
+  // 월별 막대 (선택 기간)
+  const months: string[] = [];
+  const first = (inRange[0]?.date ?? rangeA.start).slice(0, 7);
+  const last = rangeA.end.slice(0, 7);
+  for (let d = new Date(`${first}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= last; d.setUTCMonth(d.getUTCMonth() + 1)) months.push(d.toISOString().slice(0, 7));
+  const byMonth = new Map<string, number[]>();
+  for (const r of inRange) {
+    const m = r.date.slice(0, 7);
+    const row = byMonth.get(m) ?? (Array(n).fill(0) as number[]);
+    r.amounts.forEach((a, i) => (row[i] += a));
+    byMonth.set(m, row);
+  }
+  const series = dep.accounts
+    .map((name, i) => ({ name, color: color(i), data: months.map((m) => byMonth.get(m)?.[i] ?? 0) }))
+    .filter((s) => s.data.some((v) => v !== 0));
+  $('dep-legend').innerHTML = series.map((s) => `<span class="item"><span class="swatch" style="background:${s.color}"></span>${escapeHtml(s.name)}</span>`).join('');
+  charts.dep = renderDepositChart($<HTMLCanvasElement>('dep-chart'), months, series, charts.dep);
+
+  $('dep-log-summary').textContent = `입금 기록 ${dep.rows.length}건 보기`;
+  $('dep-log-table').innerHTML = `<thead><tr><th>날짜</th>${dep.accounts.map((a) => `<th>${escapeHtml(a)}</th>`).join('')}<th>합계</th></tr></thead>
+    <tbody>${[...dep.rows]
+      .reverse()
+      .map((r) => `<tr><td>${r.date}</td>${r.amounts.map((a) => `<td>${a ? wonShort(a) : ''}</td>`).join('')}<td>${wonShort(r.amounts.reduce((x, y) => x + y, 0))}</td></tr>`)
+      .join('')}</tbody>`;
+}
+
 // ─── 그룹별 비중 ─────────────────────────────────────────────
 
 function dimKey(p: Position, dim: string): string {
@@ -616,9 +705,14 @@ function renderAllocation() {
   const ps = positions();
   const custom = state.groupDim === CUSTOM;
   $('group-toolbar').hidden = !custom;
+  const empty = ps.length === 0;
+  $('alloc-body').hidden = empty;
+  $('alloc-empty').hidden = !empty;
+  $('alloc-empty').textContent = custom
+    ? `보유 종목 정보가 아직 없습니다. 마이데이터 동기화 후 자동으로 채워지며, 지금은 "+ 종목 직접 추가"로 입력해 그룹별 비중을 볼 수 있습니다.${store.groups.length ? ` (그룹: ${store.groups.map((g) => g.name).join(', ')})` : ''}`
+    : '보유 종목 정보가 아직 없습니다. 마이데이터 동기화 후 표시됩니다.';
   const unpriced = ps.filter((p) => p.price === null).length;
-  $('alloc-note').textContent =
-    model.source === 'excel' ? `투자내역의 보유 종목 기준${unpriced ? ` · 현재가 미입력 ${unpriced}종목은 매입가로 계산` : ''}` : '';
+  $('alloc-note').textContent = unpriced ? `현재가 미입력 ${unpriced}종목은 매입가로 계산` : '';
 
   let rows: AllocRow[];
   let customRows: CustomGroupRow[] = [];
@@ -877,16 +971,35 @@ function confirmDeleteStock(key: string) {
   openConfirm('종목 삭제', `직접 추가한 '${m.name}'을(를) 지웁니다.`, '삭제', () => mutate(() => deleteManualStock(store, key)));
 }
 
-function confirmClearExcel() {
-  openConfirm('엑셀 데이터 지우기', '이 브라우저에 저장된 엑셀 데이터와 엑셀용 그룹 설정을 지웁니다. 원본 엑셀 파일은 그대로입니다.', '지우기', () => {
+function confirmClearData() {
+  openConfirm('불러온 데이터 지우기', '이 브라우저에 저장된 내 데이터(엑셀에서 불러온 값)와 그룹 설정을 지웁니다. 원본 엑셀 파일은 그대로입니다.', '지우기', () => {
     try {
       localStorage.removeItem(EXCEL_KEY);
-      localStorage.removeItem('stock-dashboard:groups:v1:excel');
+      localStorage.removeItem('stock-dashboard:groups:v1:mine');
     } catch {
       /* 무시 */
     }
     excelBook = null;
-    setSource('dummy');
+    setModel(dummyModel);
+  });
+}
+
+function dialogSync() {
+  const status = mydataStatus();
+  openForm({
+    title: '마이데이터 동기화',
+    description: status.configured
+      ? '연결된 마이데이터에서 계좌 · 보유 종목 · 현재가 · 입출금 내역을 가져와 화면을 최신으로 바꿉니다. 그룹 설정은 그대로 유지됩니다.'
+      : '마이데이터 중계 서버가 아직 연결되지 않았습니다. 연결되면 이 메뉴에서 계좌 · 보유 종목 · 현재가 · 입출금 내역을 한 번에 가져옵니다. 그때까지는 "엑셀 파일로 업데이트"를 사용하세요.',
+    fields: [],
+    submitLabel: status.configured ? '동기화 시작' : '확인',
+    onSubmit: () => {
+      if (!status.configured) return;
+      showNote('마이데이터에서 가져오는 중…');
+      syncMyData()
+        .then((m) => setModel(m))
+        .catch((ex) => showNote(`동기화하지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true));
+    },
   });
 }
 
@@ -939,7 +1052,10 @@ function renderHoldings() {
   const cash = cashTotal();
   const total = ps.reduce((s, p) => s + p.valueKRW, 0) + cash || 1;
   const max = ps[0]?.valueKRW ?? 1;
-  $('hold-count').textContent = `${aggregateByKey(ps).length}개 종목${cash ? ` · 현금 ${won(cash)}` : ''} · 합계 ${wonShort(total)}`;
+  $('hold-empty').hidden = ps.length > 0;
+  $('hold-wrap').hidden = ps.length === 0;
+  $('hold-empty').textContent = '보유 종목 정보는 마이데이터 동기화 후 표시됩니다. 그룹별 비중의 "+ 종목 직접 추가"로 입력한 종목은 여기에도 나옵니다.';
+  $('hold-count').textContent = ps.length || cash ? `${aggregateByKey(ps).length}개 종목${cash ? ` · 현금 ${won(cash)}` : ''} · 합계 ${wonShort(total)}` : '';
   $('hold-table').innerHTML = `<thead><tr><th>종목</th>${multi ? '<th class="left">계좌</th>' : ''}<th class="left">그룹</th><th>수량</th><th>평균단가</th><th>현재가</th><th>평가금</th><th>평가손익</th><th>수익률</th><th>비중</th><th></th></tr></thead>
     <tbody>${ps
       .map((p) => {
@@ -961,27 +1077,6 @@ function renderHoldings() {
       })
       .join('')}</tbody>`;
 
-  const trades = model.closedTrades ?? [];
-  const det = $<HTMLDetailsElement>('trades');
-  det.hidden = !trades.length;
-  if (!trades.length) return;
-  const realized = trades.reduce((s, t) => s + t.profitKRW, 0);
-  $('trades-summary').innerHTML = `매도 기록 ${trades.length}건 · 실현손익 합계 ${signed(realized, wonSigned(realized))}`;
-  $('trades-table').innerHTML = `<thead><tr><th>매도일</th><th class="left">종목</th><th>수량</th><th>매수가</th><th>매도가</th><th>수익률</th><th>실현손익</th><th class="left">메모</th></tr></thead>
-    <tbody>${trades
-      .map(
-        (t) => `<tr>
-          <td>${t.sellDate ?? '-'}</td>
-          <td class="left">${escapeHtml(t.name)}</td>
-          <td>${number(t.quantity)}</td>
-          <td>${unitPrice(t.buyPrice, t.currency)}</td>
-          <td>${unitPrice(t.sellPrice, t.currency)}</td>
-          <td>${signed(t.returnRate, pctSigned(t.returnRate))}</td>
-          <td>${signed(t.profitKRW, wonSigned(t.profitKRW))}</td>
-          <td class="left memo" title="${escapeHtml([t.buyNote, t.sellNote].filter(Boolean).join(' / '))}">${escapeHtml(t.sellNote ?? t.buyNote ?? '')}</td>
-        </tr>`,
-      )
-      .join('')}</tbody>`;
 }
 
 main().catch((e) => {

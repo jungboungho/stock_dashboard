@@ -42,11 +42,12 @@ export function emptyStore(): GroupStore {
   return { version: 1, groups: [], members: {}, manual: [], prices: {} };
 }
 
-export function seedStore(positions: Position[], defaults: { name: string; match: (p: Position) => boolean }[] = []): GroupStore {
+/** 기본 그룹 만들기. 종목이 아직 없을 때(keepEmpty)는 빈 그룹으로 만들어 둔다 */
+export function seedStore(positions: Position[], defaults: { name: string; match: (p: Position) => boolean }[] = [], keepEmpty = false): GroupStore {
   const store = emptyStore();
   for (const d of defaults) {
     const hits = positions.filter((p) => d.match(p) && !store.members[p.key]);
-    if (!hits.length) continue;
+    if (!hits.length && !keepEmpty) continue;
     const id = newId('g');
     store.groups.push({ id, name: d.name });
     for (const p of hits) store.members[p.key] = id;

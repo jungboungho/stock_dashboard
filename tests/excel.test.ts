@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
 import { JSDOM } from 'jsdom';
 import { readWorkbook, type Workbook } from '../src/data/excel/xlsx';
-import { parseStockBook, serialToIso } from '../src/data/excel/parse';
-import { excelClosedTrades, excelPositions, excelSnapshots, makeExcelModel } from '../src/data/excelModel';
+import { parseStockBook, serialToIso, toDate } from '../src/data/excel/parse';
+import { excelSnapshots, makeExcelModel } from '../src/data/excelModel';
 import { yearlyReturns } from '../src/domain/yearly';
 
 // 실제 파일과 같은 구조의 작은 가상 통합문서 (금액은 임의 값, 단위 만원)
@@ -26,14 +26,16 @@ const BOOK: Workbook = {
     A23: '2026-01', D23: 200, G23: 2400,
     A24: '2026-02',
   },
-  투자내역: {
-    A3: '종목', B3: '개수', C3: '구매가격', D3: '판매가격', E3: '수익률', F3: '수익금액', G3: '구매날짜', H3: '판매날짜', I3: '구매노트', J3: '판매노트',
-    A4: 'SCHD', B4: 10, C4: 25, G4: 45664,
-    A5: 'SCHD', B5: 30, C5: 27, G5: 45700,
-    A6: 'TIGER 미배다우', B6: 100, C6: 12000, G6: 45748,
-    A7: '테슬라', B7: 5, C7: 200, D7: 300, E7: 0.5, F7: 700000, H7: 45656, J7: '일부 익절',
-    A8: '쿠팡', B8: 10, C8: 15, H8: 45656,
+  입금내역: {
+    A1: '날짜', B1: '종합', C1: 'ISA', D1: '연금1', E1: '연금2',
+    A2: '~24 / 1 / 5', B2: 900, D2: 100,
+    A3: 45460, B3: 200, C3: 200,
+    A4: 45677, B4: -300, C4: 300,
+    A5: 45700,
+    A6: '2026-01-10', E6: 200,
   },
+  // 최신이 아닌 시트 — 읽지 않아야 한다
+  투자내역: { A3: '종목', B3: '개수', C3: '구매가격', A4: 'SCHD', B4: 10, C4: 25 },
   해외주식리스트: { A1: '미국주식 리스트', F1: '환율', A2: '테슬라', A3: 'SCHD', A4: '쿠팡', F2: 1400 },
 };
 
@@ -70,19 +72,25 @@ describe('엑셀 해석', () => {
     expect(s.at(-1)!.principal).toBe(19_000_000);
   });
 
-  it('보유 종목: 판매 기록 없는 매수만 합산, 달러 종목은 환율 적용', () => {
-    const ps = excelPositions(book);
-    expect(ps.map((p) => p.name)).toEqual(['SCHD', 'TIGER 미배다우']);
-    expect(ps[0]).toMatchObject({ currency: 'USD', quantity: 40, price: null });
-    expect(ps[0].avgPrice).toBeCloseTo(26.5);
-    expect(ps[0].costKRW).toBeCloseTo(40 * 26.5 * 1400);
-    expect(ps[1]).toMatchObject({ currency: 'KRW', costKRW: 1_200_000 });
+  it('입금내역: 날짜 · 계좌별 금액, 빈 줄은 건너뜀', () => {
+    expect(book.depositAccounts).toEqual(['종합', 'ISA', '연금1', '연금2']);
+    expect(book.deposits.map((d) => d.date)).toEqual(['2024-01-05', serialToIso(45460), serialToIso(45677), '2026-01-10']);
+    expect(book.deposits[0].amounts).toEqual([9_000_000, 0, 1_000_000, 0]);
+    expect(book.deposits[2].amounts).toEqual([-3_000_000, 3_000_000, 0, 0]); // 계좌 간 이체
   });
 
-  it('매도 기록', () => {
-    const t = excelClosedTrades(book);
-    expect(t).toHaveLength(1);
-    expect(t[0]).toMatchObject({ name: '테슬라', currency: 'USD', profitKRW: 700000, sellDate: serialToIso(45656), sellNote: '일부 익절' });
+  it('투자내역은 쓰지 않는다 (보유 종목 없음)', () => {
+    const m = makeExcelModel(book, '2026-01-20');
+    expect(m.positions([])).toEqual([]);
+    expect(m.deposits?.rows).toHaveLength(4);
+    expect('lots' in book).toBe(false);
+  });
+
+  it('날짜 표기', () => {
+    expect(toDate('~23 / 2 / 9')).toBe('2023-02-09');
+    expect(toDate('2025.3.7')).toBe('2025-03-07');
+    expect(toDate(45099)).toBe('2023-06-22');
+    expect(toDate('메모')).toBeUndefined();
   });
 
   it('연초대비 수익률은 엑셀 수식과 같다', () => {

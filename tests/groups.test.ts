@@ -151,4 +151,10 @@ describe('그룹별 비중', () => {
     expect(s.groups.map((g) => g.name)).toEqual(['배당주', '채권']);
     expect(Object.keys(s.members).sort()).toEqual(['SCHD', 'SGOV']);
   });
+
+  it('종목이 없으면 빈 기본 그룹을 만들어 둔다 (keepEmpty)', () => {
+    const s = seedStore([], [{ name: '배당주', match: () => true }, { name: '채권', match: () => true }], true);
+    expect(s.groups.map((g) => g.name)).toEqual(['배당주', '채권']);
+    expect(s.members).toEqual({});
+  });
 });

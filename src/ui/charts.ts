@@ -418,3 +418,54 @@ export function renderYtd(canvas: HTMLCanvasElement, series: YtdSeries[], goal: 
   });
   return chart;
 }
+
+// ─── 월별 계좌별 입금 (누적 막대, 음수 = 출금 · 이체) ─────────────
+
+export function renderDepositChart(
+  canvas: HTMLCanvasElement,
+  months: string[],
+  series: { name: string; color: string; data: number[] }[],
+  prev?: AnyChart,
+): AnyChart {
+  prev?.destroy();
+  const chart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: months,
+      datasets: series.map((s) => ({
+        label: s.name,
+        data: s.data,
+        backgroundColor: s.color,
+        borderColor: token('--surface'),
+        borderWidth: { top: 1, bottom: 1, left: 0, right: 0 },
+        borderSkipped: false,
+        maxBarThickness: 22,
+        stack: 'flow',
+      })),
+    },
+    options: {
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true, ticks: { callback: (_, i) => monthLabel(months[i]), maxRotation: 0, autoSkip: true, maxTicksLimit: 10 }, grid: { display: false }, border: { display: false } },
+        y: {
+          stacked: true,
+          ticks: { callback: (v) => wonCompact(Number(v)), maxTicksLimit: 5 },
+          border: { display: false },
+          grid: { color: (c) => (c.tick.value === 0 ? token('--text-muted') : token('--grid')) },
+        },
+      },
+      plugins: {
+        tooltip: {
+          displayColors: true,
+          filter: (item) => Number(item.raw) !== 0,
+          callbacks: {
+            title: (items) => `${months[items[0].dataIndex].replace('-', '년 ')}월`,
+            label: (item) => `${item.dataset.label}  ${wonSigned(Number(item.raw))}`,
+            footer: (items) => `합계  ${wonSigned(items.reduce((s, i) => s + Number(i.raw), 0))}`,
+          },
+        },
+      },
+    },
+  });
+  return chart;
+}

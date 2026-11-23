@@ -16,9 +16,26 @@
           <p class="sub" id="asof"></p>
         </div>
         <div class="topbar-right">
-          <div class="seg small" id="source-seg" role="group" aria-label="데이터 출처" hidden></div>
-          <label class="btn" for="excel-input" id="excel-label">엑셀 가져오기</label>
-          <input type="file" id="excel-input" accept=".xlsx" hidden />
+          <div class="sync">
+            <button type="button" class="btn primary" id="sync-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="sync-menu">
+              <span aria-hidden="true">⟳</span> 마이데이터 동기화 <span class="caret-down" aria-hidden="true">▾</span>
+            </button>
+            <div class="menu" id="sync-menu" role="menu" hidden>
+              <button type="button" role="menuitem" id="menu-sync">
+                <span>최신 정보 가져오기</span>
+                <small id="sync-state">계좌 · 보유 종목 · 현재가 · 입출금</small>
+              </button>
+              <button type="button" role="menuitem" id="menu-excel">
+                <span>엑셀 파일로 업데이트</span>
+                <small>마이데이터 연결 전 임시 · 파일은 브라우저 안에서만 읽음</small>
+              </button>
+              <button type="button" role="menuitem" id="menu-clear" class="danger">
+                <span>불러온 데이터 지우기</span>
+                <small>이 브라우저에 저장된 값 삭제</small>
+              </button>
+            </div>
+            <input type="file" id="excel-input" accept=".xlsx" hidden />
+          </div>
           <button class="icon-btn" id="theme-toggle" type="button" aria-label="화면 테마 전환">◐</button>
         </div>
       </header>
@@ -26,7 +43,6 @@
 
       <nav class="filters" aria-label="계좌 선택">
         <div class="seg" id="account-seg" role="group"></div>
-        <div class="account-chips" id="account-chips"></div>
       </nav>
 
       <section class="kpis" id="kpis" aria-label="요약"></section>
@@ -98,6 +114,27 @@
         </div>
       </section>
 
+      <section class="card" aria-labelledby="dep-title" id="deposit-card" hidden>
+        <div class="card-head">
+          <div>
+            <h2 id="dep-title">계좌별 입금</h2>
+            <p class="hint">입금내역 기준 · 음수는 출금 또는 다른 계좌로 이체 · 막대는 선택한 기간만 표시</p>
+          </div>
+        </div>
+        <div class="mini-kpis" id="dep-kpis"></div>
+        <div class="year-grid">
+          <div class="table-wrap"><table id="dep-table" class="data"></table></div>
+          <div>
+            <div class="legend" id="dep-legend"></div>
+            <div class="chart-box mid"><canvas id="dep-chart" aria-label="월별 계좌별 입금"></canvas></div>
+          </div>
+        </div>
+        <details id="dep-log">
+          <summary id="dep-log-summary"></summary>
+          <div class="table-wrap"><table id="dep-log-table" class="data"></table></div>
+        </details>
+      </section>
+
       <div class="grid-2" id="grid-2">
         <section class="card" aria-labelledby="alloc-title">
           <div class="card-head">
@@ -112,7 +149,8 @@
             <button type="button" class="btn" id="stock-add">+ 종목 직접 추가</button>
             <span class="hint">그룹 줄을 누르면 소속 종목을 보고 편집할 수 있습니다</span>
           </div>
-          <div class="alloc">
+          <p class="empty-state" id="alloc-empty" hidden></p>
+          <div class="alloc" id="alloc-body">
             <div class="chart-box donut"><canvas id="alloc-chart" aria-label="그룹별 비중"></canvas></div>
             <div class="table-wrap"><table id="group-table" class="data"></table></div>
           </div>
@@ -135,11 +173,8 @@
           <h2 id="hold-title">보유 종목</h2>
           <span class="hint" id="hold-count"></span>
         </div>
-        <div class="table-wrap"><table id="hold-table" class="data"></table></div>
-        <details id="trades" hidden>
-          <summary id="trades-summary"></summary>
-          <div class="table-wrap"><table id="trades-table" class="data"></table></div>
-        </details>
+        <p class="empty-state" id="hold-empty" hidden></p>
+        <div class="table-wrap" id="hold-wrap"><table id="hold-table" class="data"></table></div>
       </section>
 
       <footer class="foot" id="foot"></footer>

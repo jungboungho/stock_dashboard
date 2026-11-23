@@ -846,3 +846,76 @@ details#trades summary {
     flex-wrap: wrap;
   }
 }
+
+/* 동기화 메뉴 */
+.sync {
+  position: relative;
+}
+.caret-down {
+  font-size: 10px;
+  opacity: 0.8;
+}
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: 290px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.menu button {
+  font: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.menu button:hover,
+.menu button:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+.menu button span {
+  font-weight: 600;
+  font-size: 13px;
+}
+.menu button small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.menu button.danger span {
+  color: var(--up);
+}
+.menu button[hidden] {
+  display: none;
+}
+.empty-state {
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+  margin: 0;
+}
+details#dep-log {
+  margin-top: 12px;
+}
+details#dep-log summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 6px 0;
+}
