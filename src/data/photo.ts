@@ -23,7 +23,7 @@ export interface PhotoRow {
   /** name/quantity/value: 지금 보유 종목과 맞춤 · list: NH 종목 목록에서 찾음 */
   matched: 'name' | 'quantity' | 'value' | 'list' | null;
   /** 종목 목록에서 앞부분이 같은 종목이 여러 개일 때 고를 후보 */
-  candidates?: { code: string; name: string }[];
+  candidates?: { code: string; name: string; market?: 'KR' | 'US' }[];
 }
 
 export interface PhotoResult {

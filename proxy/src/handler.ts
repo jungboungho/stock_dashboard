@@ -59,6 +59,14 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore)
       const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes);
       return json(result);
     }
+    // 종목 마스터 파일 (공개 · 인증 불필요). NH 사이트가 브라우저 직접 접근(CORS)을 막아서 그대로 전달만 한다.
+    // 해석은 브라우저가 한다 (Worker 무료 CPU 한도 안에서 끝나도록)
+    const mst = /^\/instruments\/(m_new_stock|m_gtsstock)\.mst$/.exec(path);
+    if (req.method === 'GET' && mst) {
+      const res = await fetch(`https://www.nhplug.com/instruments/${mst[1]}.mst`);
+      if (!res.ok) return json({ error: `종목 파일을 받지 못했습니다 (NH ${res.status})` }, 502);
+      return new Response(res.body, { headers: { ...h, 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' } });
+    }
     return json({ error: '없는 경로입니다' }, 404);
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 502);

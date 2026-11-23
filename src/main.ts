@@ -55,7 +55,7 @@ import {
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
-import { fillFromInstruments, loadInstruments, type Instrument } from './data/instruments';
+import { fillFromInstruments, loadInstruments, refreshInstruments, savedListInfo, type Instrument } from './data/instruments';
 
 // ─── 상태 ────────────────────────────────────────────────────
 
@@ -129,6 +129,7 @@ async function main() {
   dummyModel = makeDummyModel(await loadPortfolio(new DummyProvider()));
   excelBook = loadExcel();
   buildControls();
+  instrumentsLabel();
   setModel(excelBook ? makeExcelModel(excelBook) : dummyModel);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 }
@@ -401,6 +402,7 @@ function buildControls() {
     input.value = '';
     if (files.length) await updateFromPhotos(files);
   });
+  $('instruments-btn').addEventListener('click', () => void updateInstrumentList());
   $('menu-export').addEventListener('click', () => {
     setMenu(false);
     void exportExcel();
@@ -1278,6 +1280,35 @@ async function exportExcel() {
   } catch (ex) {
     if ((ex as DOMException)?.name === 'AbortError') return;
     showNote(`엑셀을 저장하지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}. 엑셀에서 파일을 열어 두었다면 닫고 다시 시도하세요.`, true);
+  }
+}
+
+// ─── 종목 목록 업데이트 ───────────────────────────────────────
+
+function instrumentsLabel() {
+  const info = savedListInfo();
+  const btn = $('instruments-btn');
+  btn.title = info
+    ? `저장된 종목 목록: 국내 ${number(info.kr)} · 미국 ${number(info.us)} (${timeLabel(info.updatedAt)}). 누르면 NH 최신 목록으로 다시 받습니다`
+    : 'NH 국내 · 미국 종목 목록을 최신으로 받아 사진 업데이트의 종목 찾기에 씁니다';
+}
+
+async function updateInstrumentList() {
+  const settings = loadSyncSettings();
+  if (!settings?.token) {
+    showNote('종목 목록은 중계 서버를 거쳐 받습니다. 먼저 "① 엑셀 불러오기"로 설정 시트가 있는 엑셀을 불러오세요.', true);
+    return;
+  }
+  const btn = $<HTMLButtonElement>('instruments-btn');
+  btn.disabled = true;
+  try {
+    const r = await refreshInstruments(settings, (msg) => showNote(msg));
+    instrumentsLabel();
+    showNote(`종목 목록을 최신으로 바꿨습니다 · 국내 ${number(r.kr)}종목 · 미국 ${number(r.us)}종목. 사진으로 계좌 업데이트에서 이 목록으로 종목을 찾습니다.`);
+  } catch (ex) {
+    showNote(`종목 목록을 받지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true);
+  } finally {
+    btn.disabled = false;
   }
 }
 

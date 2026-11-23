@@ -49,7 +49,7 @@ export function openPhotoReview(results: PhotoResult[], accounts: string[], usdK
   const pick = (r: PhotoRow) =>
     r.candidates && r.candidates.length > 1
       ? `<select name="pick" class="pick" aria-label="같은 앞부분의 종목 중 고르기">${r.candidates
-          .map((c) => `<option value="${escapeHtml(c.code)}" data-name="${escapeHtml(c.name)}" ${c.code === r.code ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`)
+          .map((c) => `<option value="${escapeHtml(c.code)}" data-name="${escapeHtml(c.name)}" ${c.code === r.code ? 'selected' : ''}>${escapeHtml(c.name)} (${escapeHtml(c.code)}${c.market === 'US' ? ' · 미국' : ''})</option>`)
           .join('')}</select><small class="ocr">앞부분이 같은 종목 ${r.candidates.length}개 — 맞는 종목을 고르세요</small>`
       : '';
   const rowHtml = (r: PhotoRow, si: number, ri: number) => `<tr data-s="${si}" data-r="${ri}">
