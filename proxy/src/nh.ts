@@ -63,6 +63,8 @@ export interface SyncResult {
   dividends: DividendRow[];
   /** 이번에 다시 받은 시작일 (장부 최신일 − 14일, 처음이면 2년 전) */
   dividendsFrom: string | null;
+  /** NH 가 응답했지만 대시보드 계좌 이름이 정해지지 않은 계좌 (반영하지 않음) */
+  unmapped: { suffix: string; holdings: number; cash: number }[];
   warnings: string[];
 }
 
@@ -289,18 +291,29 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   const fresh: Omit<DividendRow, 'fx' | 'krw'>[] = [];
   const fetchedAccounts: string[] = [];
 
+  const unmapped: SyncResult['unmapped'] = [];
+  const nameOf = (actNo: string) => map.find((m) => actNo.endsWith(m.suffix))?.name ?? null;
   for (const { suffix, name } of map) {
-    const acct = live.find((a) => s(a.acct_no).endsWith(suffix));
-    if (!acct) {
-      warnings.push(`${name}: NH 계좌 목록에 끝자리 ${suffix} 계좌가 없습니다`);
-      continue;
-    }
+    if (!live.some((a) => s(a.acct_no).endsWith(suffix))) warnings.push(`${name}: NH 계좌 목록에 끝자리 ${suffix} 계좌가 없습니다 (엑셀 값 유지)`);
+  }
+
+  // NH 가 응답하는 모든 실계좌: 이름이 정해진 계좌는 최신으로, 아니면 잔고가 오는지만 알려준다
+  for (const acct of live) {
     const act_no = s(acct.acct_no);
+    const name = nameOf(act_no);
     const kr = await nh.call('/krstock/inquiry/v1/balance', { act_no, bnc_bse_cd: '1', ltg_aot_dit_cd: '9', aet_bse: '2', qut_dit_cd: 'UNT', aly_qut_cd: '1' });
     const gb = await nh.call('/gbstock/inquiry/v1/balance', { act_no, qut_iqr_dit_cd: '9', fc_sec_trd_nat_cd: '200', cur_cd: 'KRW', xns_dit_cd: '0' });
+    if (!name) {
+      if (!(failed(kr, 'Output_0') && failed(gb, 'Output_0'))) {
+        const k = mapKrStock('', kr);
+        const g = mapGbStock('', gb);
+        unmapped.push({ suffix: act_no.slice(-4), holdings: k.rows.length + g.rows.length, cash: (k.cash ?? 0) + (g.cashUsd ?? 0) });
+      }
+      continue;
+    }
     const au = await nh.call('/krgold/inquiry/v1/goldDepositAndBalance', { act_no });
     if (failed(kr, 'Output_0') && failed(gb, 'Output_0') && failed(au, 'Output_0')) {
-      warnings.push(`${name}: 잔고를 받지 못했습니다 (${s(kr.rsp_msg) || s(gb.rsp_msg)})`);
+      warnings.push(`${name}: 잔고를 받지 못했습니다 (${s(kr.rsp_msg) || s(gb.rsp_msg)}) — 엑셀 값 유지`);
       continue;
     }
     const k = mapKrStock(name, kr);
@@ -363,5 +376,5 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     await ledger.put(JSON.stringify({ updatedAt: new Date().toISOString(), rows: book } satisfies DividendLedger));
   }
 
-  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends: book, dividendsFrom, warnings };
+  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends: book, dividendsFrom, unmapped, warnings };
 }

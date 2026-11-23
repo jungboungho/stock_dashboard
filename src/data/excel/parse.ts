@@ -368,22 +368,27 @@ export function parseGroups(book: Workbook): ExcelGroup[] {
 
 /**
  * '설정' 시트의 동기화 설정 (어느 칸이든 '중계 서버 주소' · '접속 토큰' 오른쪽 칸 값).
+ * 'NH 계좌 1234' 오른쪽 칸 = 그 NH 계좌(끝자리 1234)를 대시보드에서 부를 계좌 이름 (예: ISA).
  * 브라우저에 저장된 엑셀 값(ExcelBook)에는 넣지 않고, 불러올 때 동기화 설정으로만 옮긴다.
  */
-export function parseSyncSettings(book: Workbook): { url: string; token: string } | null {
+export function parseSyncSettings(book: Workbook): { url: string; token: string; accountMap: Record<string, string> } | null {
   const cells = findSheet(book, SETTINGS_SHEET);
   if (!cells) return null;
   const g = grid(cells);
   let url = '';
   let token = '';
+  const accountMap: Record<string, string> = {};
   for (const r of g.rows) {
     for (let c = 1; c < g.maxCol; c++) {
       const label = str(g.get(c, r));
       if (label === SETTING_URL) url = str(g.get(c + 1, r));
       if (label === SETTING_TOKEN) token = str(g.get(c + 1, r));
+      const m = /^NH\s*계좌\s*(\d{3,6})$/.exec(label);
+      const name = str(g.get(c + 1, r));
+      if (m && name) accountMap[m[1]] = name;
     }
   }
-  return url && token ? { url, token } : null;
+  return url && token ? { url, token, accountMap } : null;
 }
 
 /** 예전 '자산스냅샷'(기준일 · 계좌 · 평가금액) → 일별 행 */

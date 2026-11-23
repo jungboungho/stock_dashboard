@@ -65,9 +65,15 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore,
       return json({ ok: true, accounts: parseAccountMap(env.NH_ACCOUNTS ?? '').map((a) => a.name) });
     }
     if (req.method === 'POST' && path === '/sync') {
-      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[] };
+      const body = (await req.json().catch(() => ({}))) as { quotes?: { code: string; currency: Currency }[]; accountMap?: Record<string, string> };
+      // 계좌 이름: 서버 비밀값(NH_ACCOUNTS) + 대시보드가 보낸 엑셀 '설정' 시트 매핑 (같은 끝자리는 엑셀 쪽)
+      const clientMap = Object.entries(body.accountMap ?? {})
+        .filter(([k, v]) => /^\d{3,6}$/.test(k) && typeof v === 'string' && v.trim() && !/[,:]/.test(v))
+        .map(([k, v]) => `${k}:${v.trim()}`);
+      const serverMap = parseAccountMap(env.NH_ACCOUNTS ?? '').filter((m) => !(body.accountMap ?? {})[m.suffix]).map((m) => `${m.suffix}:${m.name}`);
+      const accounts = [...serverMap, ...clientMap].join(',');
       const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 60);
-      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts: env.NH_ACCOUNTS, tokens }, quotes, ledger ?? null);
+      const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts, tokens }, quotes, ledger ?? null);
       return json(result);
     }
     if (path === '/instruments' && list) {

@@ -143,6 +143,8 @@ export interface SyncResult {
   /** dividendsFrom 부터 NH 계좌의 배당 입금 (금액은 그 통화) */
   dividends?: { date: string; account: string; code: string; name: string; currency: Currency; amount: number; fx?: number; krw?: number }[];
   dividendsFrom?: string | null;
+  /** NH 가 응답했지만 대시보드 계좌 이름이 없는 계좌 (반영하지 않음) */
+  unmapped?: { suffix: string; holdings: number; cash: number }[];
   /** 받지 못한 항목 */
   warnings: string[];
 }

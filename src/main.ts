@@ -179,7 +179,7 @@ function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | n
   const sync = parseSyncSettings(wb);
   if (sync) {
     try {
-      saveSyncSettings({ url: normalizeUrl(sync.url), token: sync.token });
+      saveSyncSettings({ url: normalizeUrl(sync.url), token: sync.token, accountMap: sync.accountMap });
       syncNote = ' 동기화 설정도 엑셀에서 가져왔습니다.';
     } catch (e) {
       syncNote = ` '설정' 시트의 중계 서버 주소를 쓸 수 없습니다 (${e instanceof Error ? e.message : String(e)}).`;
@@ -1319,9 +1319,13 @@ async function runSync() {
     const apiNames = res.accounts.map((a) => a.name);
     const priced = new Set(next.rows.filter((r) => !apiNames.includes(r.account) && r.code && res.prices[r.code]).map((r) => r.code)).size;
     const accounts = res.accounts.map((a) => `${a.name} ${a.rows.length}종목`).join(', ');
+    // NH 가 새로 응답하는 계좌: 이름이 없으면 반영하지 않고(엑셀 값 유지) 알려만 준다
+    const unmappedNote = res.unmapped?.length
+      ? ` NH가 새 계좌도 응답합니다: ${res.unmapped.map((u) => `끝자리 ${u.suffix}(종목 ${u.holdings}개)`).join(', ')}. 엑셀 '설정' 시트에 "NH 계좌 ${res.unmapped[0].suffix}" | 계좌 이름(예: ISA) 줄을 넣고 다시 불러오면 다음 동기화부터 최신으로 바뀝니다 — 지금은 엑셀 값 유지.`
+      : '';
     showNote(
-      `동기화했습니다 · ${accounts || 'NH 계좌 없음'} · 다른 계좌 현재가 ${priced}종목 반영${res.usdKrw ? ` · 환율 ${number(res.usdKrw)}원` : ''}${newDividends ? ` · 새 배당 ${newDividends}건` : ''}.${res.warnings.length ? ` 확인 필요: ${res.warnings.join(' / ')}` : ''} 수정을 마치면 "③ 엑셀 업데이트"로 저장하세요.`,
-      res.warnings.length > 0,
+      `동기화했습니다 · ${accounts || 'NH 계좌 없음'} · 다른 계좌 현재가 ${priced}종목 반영${res.usdKrw ? ` · 환율 ${number(res.usdKrw)}원` : ''}${newDividends ? ` · 새 배당 ${newDividends}건` : ''}.${unmappedNote}${res.warnings.length ? ` 확인 필요: ${res.warnings.join(' / ')}` : ''} 수정을 마치면 "③ 엑셀 업데이트"로 저장하세요.`,
+      res.warnings.length > 0 || unmappedNote !== '',
     );
   } catch (ex) {
     showNote(`동기화하지 못했습니다: ${ex instanceof Error ? ex.message : String(ex)}`, true);
