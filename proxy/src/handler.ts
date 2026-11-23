@@ -37,7 +37,10 @@ function safeEqual(a: string, b: string): boolean {
   return d === 0;
 }
 
-export async function handle(req: Request, env: ProxyEnv, tokens: TokenStore): Promise<Response> {
+export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore): Promise<Response> {
+  // 비밀값을 넣을 때 따라 들어온 줄바꿈 · 공백 제거
+  const t = (v: string | undefined) => (v ?? '').trim();
+  const env: ProxyEnv = { ...rawEnv, NH_APP_KEY: t(rawEnv.NH_APP_KEY), NH_APP_SECRET: t(rawEnv.NH_APP_SECRET), NH_ACCOUNTS: t(rawEnv.NH_ACCOUNTS), PROXY_TOKEN: t(rawEnv.PROXY_TOKEN) };
   const h = cors(req, env);
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...h, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });

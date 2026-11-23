@@ -76,7 +76,8 @@ export class NhClient {
   private readonly f: typeof fetch;
 
   constructor(private readonly cfg: NhConfig) {
-    this.f = cfg.fetch ?? fetch;
+    // Workers 에서는 전역 fetch 를 객체에 담아 부르면 this 가 바뀌어 오류가 난다 → 감싸서 호출
+    this.f = cfg.fetch ?? ((input, init) => fetch(input, init));
   }
 
   private async getToken(force = false): Promise<string> {
