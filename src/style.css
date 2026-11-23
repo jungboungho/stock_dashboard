@@ -120,7 +120,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text-primary);
-  font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  font-family: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -128,7 +128,9 @@ body {
 #app {
   max-width: 1240px;
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: flex;
   flex-direction: column;
   gap: 16px;
