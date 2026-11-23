@@ -6,3 +6,7 @@ dist/
 *.xls
 *.csv
 local-data/
+credential*.txt
+.env
+.env.*
+__pycache__/
