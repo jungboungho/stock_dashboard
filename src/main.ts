@@ -56,7 +56,9 @@ import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import {
   addMarketItems,
+  marketInfo,
   marketKind,
+  marketWatchItem,
   missingMarketItems,
   addWatchGroup,
   addWatchItem,
@@ -1957,14 +1959,14 @@ function renderWatchlist() {
   // 지수는 포인트, 환율은 소수 둘째 자리까지 원, 금은 원/g
   const price = (v: number | null | undefined, i: WatchItem) => {
     if (v == null) return dash;
-    const kind = marketKind(i.code);
-    if (kind === 'index') return number(v);
-    if (kind === 'fx') return `${number(v)}원`;
+    const m = marketInfo(i.code);
+    if (m) return `${number(v)}${m.unit}`;
     return unitPrice(v, i.currency);
   };
   const tag = (i: WatchItem) => {
     const kind = marketKind(i.code);
-    if (kind) return ` <span class="chip">${kind === 'index' ? '지수' : kind === 'fx' ? '환율' : '금'}</span>`;
+    const m = marketInfo(i.code);
+    if (kind) return ` <span class="chip">${m && m.region !== '기타' ? `${m.region} ` : ''}${kind === 'index' ? '지수' : kind === 'fx' ? '환율' : '금'}</span>`;
     return i.currency === 'USD' ? ' <span class="chip">미국</span>' : '';
   };
   const rate = (v: number | null | undefined) => (v == null ? dash : signed(v, pctSigned(v)));
@@ -2060,16 +2062,14 @@ async function dialogWatchAdd() {
   const defaultGroup = watchGroups.find((g) => g !== WATCH_UNGROUPED) ?? excelBook.watchlist.groups[0] ?? WATCH_UNGROUPED;
   const resolve = (text: string): Instrument | null => {
     const t = text.trim();
-    const code = /\(([^()]+)\)\s*(?:·\s*미국)?$/.exec(t)?.[1]?.trim().toUpperCase() ?? t.toUpperCase();
+    const code = /\(([^()]+)\)\s*(?:·\s*[^()·]+)?$/.exec(t)?.[1]?.trim().toUpperCase() ?? t.toUpperCase();
     return list.find((i) => i.code === code) ?? list.find((i) => i.name === t) ?? searchInstruments(list, t, 1)[0] ?? null;
   };
   openForm({
     title: '관심 종목 추가',
-    description: list.some((i) => i.market === 'US')
-      ? '종목 이름이나 코드(국내 6자리 · 미국 티커)를 입력하면 후보가 나옵니다.'
-      : '종목 이름이나 코드를 입력하면 후보가 나옵니다. 미국 종목은 "종목 목록 업데이트"를 한 번 누르면 이름으로도 찾을 수 있습니다.',
+    description: `${list.some((i) => i.market === 'US') ? '종목 이름이나 코드(국내 6자리 · 미국 티커)를 입력하면 후보가 나옵니다.' : '종목 이름이나 코드를 입력하면 후보가 나옵니다. 미국 종목은 "종목 목록 업데이트"를 한 번 누르면 이름으로도 찾을 수 있습니다.'} 지수 · 환율 · 금은 이름이나 지역으로 찾으세요 (예: 니케이, 일본, 유로, 환율).`,
     fields: [
-      { name: 'stock', label: '종목', placeholder: 'TIGER 미국S&P500 · 360750 · SCHD', required: true },
+      { name: 'stock', label: '종목', placeholder: 'TIGER 미국S&P500 · 360750 · SCHD · 니케이 · 환율', required: true },
       { name: 'group', label: '그룹', type: 'select', value: defaultGroup, options: watchGroupOptions() },
     ],
     submitLabel: '추가',
@@ -2078,7 +2078,8 @@ async function dialogWatchAdd() {
       // 목록에 없는 미국 티커도 그대로 받는다
       if (!found && /^[A-Za-z.]{1,6}$/.test(v.stock.trim())) found = { code: v.stock.trim().toUpperCase(), name: v.stock.trim().toUpperCase(), market: 'US' };
       if (!found) throw new Error('종목 목록에서 찾지 못했습니다. 이름을 더 정확히 입력하거나 코드를 넣어 보세요');
-      watchChanged(addWatchItem(excelBook!.watchlist, { code: found.code, name: found.name, currency: found.market === 'US' ? 'USD' : 'KRW' }, v.group));
+      const m = marketInfo(found.code);
+      watchChanged(addWatchItem(excelBook!.watchlist, m ? marketWatchItem(m) : { code: found.code, name: found.name, currency: found.market === 'US' ? 'USD' : 'KRW' }, v.group));
       showNote(`${found.name}을(를) 관심 종목에 넣었습니다. 시세는 "② 최신 정보 가져오기" 때 받습니다.`);
     },
   });
@@ -2092,7 +2093,12 @@ async function dialogWatchAdd() {
   input.addEventListener('input', () => {
     const q = input.value.trim();
     const hits = q.length < 1 ? [] : [...list.filter((i) => i.code === q.toUpperCase()), ...searchInstruments(list, q, 12)].slice(0, 12);
-    dl.innerHTML = hits.map((i) => `<option value="${escapeHtml(`${i.name} (${i.code})${i.market === 'US' ? ' · 미국' : ''}`)}"></option>`).join('');
+    const label = (i: Instrument) => {
+      const m = marketInfo(i.code);
+      if (m) return ` · ${m.region} ${marketKind(i.code) === 'index' ? '지수' : marketKind(i.code) === 'fx' ? '환율' : '금'}`;
+      return i.market === 'US' ? ' · 미국' : '';
+    };
+    dl.innerHTML = hits.map((i) => `<option value="${escapeHtml(`${i.name} (${i.code})${label(i)}`)}"></option>`).join('');
   });
 }
 

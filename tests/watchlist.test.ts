@@ -177,6 +177,34 @@ describe('중계 서버: 지수 · 환율 · 금 시세', () => {
     expect(q!.closeChange).toBeCloseTo(1342.6 / 159.29 / (1350 / 160) - 1, 10);
   });
 
+  it('원/유로: NH 는 달러/유로(1유로 = ? 달러)라 원/달러와 곱한다', async () => {
+    const nh = nhFake((_p, b) =>
+      b.iem_cd === 'KRW'
+        ? { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '1340', prdy_ctrt: '0.10', prdy_vrss_sign: '2' }, Output_1: [{ bsop_date: '20261124', ovrs_prpr: '1340' }, { bsop_date: '20261123', ovrs_prpr: '1338' }, { bsop_date: '20261120', ovrs_prpr: '1330' }] }
+        : { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '1.09', prdy_ctrt: '-0.20', prdy_vrss_sign: '5' }, Output_1: [{ bsop_date: '20261124', ovrs_prpr: '1.09' }, { bsop_date: '20261123', ovrs_prpr: '1.1' }, { bsop_date: '20261120', ovrs_prpr: '1.08' }] },
+    );
+    const q = await quoteMarket(nh, 'FX:EURKRW', after);
+    expect(q!.price).toBeCloseTo(1.09 * 1340, 8);
+    expect(q!.change).toBeCloseTo(1.001 * 0.998 - 1, 10);
+    expect(q!.close).toBeCloseTo(1.1 * 1338, 8);
+    expect(q!.closeChange).toBeCloseTo((1.1 * 1338) / (1.08 * 1330) - 1, 10);
+  });
+
+  it('엔/달러는 NH 값 그대로, 니케이는 도쿄 시간으로 종가', async () => {
+    const asked: string[] = [];
+    const nh = nhFake((_p, b) => {
+      asked.push(b.iem_cd);
+      return { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '150', prdy_ctrt: '0.5', prdy_vrss_sign: '2' }, Output_1: [{ bsop_date: '20261124', ovrs_prpr: '150' }, { bsop_date: '20261121', ovrs_prpr: '149' }, { bsop_date: '20261120', ovrs_prpr: '148' }] };
+    });
+    const fx = await quoteMarket(nh, 'FX:USDJPY', after);
+    expect(fx).toMatchObject({ price: 150, close: 149 }); // 환율 '종가'는 어제
+    expect(asked).toEqual(['JPY']);
+    const inSession = await quoteMarket(nh, 'IDX:N225', new Date('2026-11-24T02:00:00Z')); // 도쿄 11:00
+    expect(inSession!.close).toBe(149);
+    const closed = await quoteMarket(nh, 'IDX:N225', after); // 도쿄 17:30
+    expect(closed!.close).toBe(150);
+  });
+
   it('금: 내린 날 등락률을 음수로, 종가는 일별 추이', async () => {
     const nh = nhFake((p) =>
       p === '/krgold/quote/v1/goldCurrent'

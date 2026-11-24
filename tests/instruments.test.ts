@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fillFromInstruments, parseDomesticMaster, parseOverseasMaster, searchInstruments, type Instrument } from '../src/data/instruments';
+import { fillFromInstruments, MARKET_INSTRUMENTS, parseDomesticMaster, parseOverseasMaster, searchInstruments, type Instrument } from '../src/data/instruments';
 import type { PhotoRow } from '../src/data/photo';
 
 const LIST: Instrument[] = [
@@ -36,6 +36,18 @@ describe('NH 종목 목록 검색', () => {
     expect(rows[1].candidates?.map((c) => c.code)).toEqual(['133690', '448300', '418660', '441680']);
     expect(rows[2]).toMatchObject({ code: 'X', matched: 'name' });
     expect(rows[3]).toMatchObject({ code: 'SCHD', currency: 'USD' });
+  });
+
+  it('지수 · 환율 · 금: 이름 · 지역 · 영문으로 찾고, 지수가 먼저 나온다', () => {
+    const list = [...MARKET_INSTRUMENTS, ...LIST];
+    expect(searchInstruments(list, '나스닥').map((i) => i.code)).toEqual(['IDX:COMP', 'IDX:NDX']);
+    expect(searchInstruments(list, 'TIGER 미국나스닥')[0].code).toBe('133690');
+    expect(searchInstruments(list, '일본', 20).map((i) => i.code)).toEqual(expect.arrayContaining(['IDX:N225', 'FX:JPYKRW', 'FX:USDJPY']));
+    expect(searchInstruments(list, 'nikkei')[0].code).toBe('IDX:N225');
+    expect(searchInstruments(list, '유로', 20).map((i) => i.code)).toEqual(expect.arrayContaining(['IDX:SX5E', 'FX:EURKRW', 'FX:EURUSD']));
+    expect(searchInstruments(list, '금').map((i) => i.code)).toContain('GOLD:KRX');
+    // 계좌 사진 맞추기에는 지수 · 환율을 쓰지 않는다
+    expect(fillFromInstruments([row('나스닥')], list)[0].code).not.toMatch(/^IDX:/);
   });
 
   it('실제 목록 파일 (public/instruments.json)', () => {

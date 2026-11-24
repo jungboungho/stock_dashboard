@@ -1,4 +1,5 @@
 import { norm, similarity, type PhotoRow } from './photo';
+import { MARKETS } from '../../proxy/src/markets';
 
 // ─────────────────────────────────────────────────────────────
 // NH 종목 목록 (국내 주식 · ETF + 미국 주식 · ETF)
@@ -8,13 +9,20 @@ import { norm, similarity, type PhotoRow } from './photo';
 // 사진에서 읽은 종목 이름 앞부분으로 종목명 · 코드를 찾을 때 쓴다.
 // ─────────────────────────────────────────────────────────────
 
-export type Market = 'KR' | 'US';
+/** MKT: 지수 · 환율 · 금 (proxy/src/markets.ts) */
+export type Market = 'KR' | 'US' | 'MKT';
 
 export interface Instrument {
   code: string;
   name: string;
   market: Market;
+  /** 이름 말고도 찾을 말 (지수 · 환율: 지역 · 영문 이름 등) */
+  aka?: string[];
 }
+
+/** 지수 · 환율 · 금. 목록 저장본이 예전 것이어도 항상 최신 목록으로 붙인다 */
+export const MARKET_INSTRUMENTS: Instrument[] = MARKETS.map((m) => ({ code: m.code, name: m.name, market: 'MKT', aka: m.aka }));
+const withMarkets = (items: Instrument[]): Instrument[] => [...MARKET_INSTRUMENTS, ...items.filter((i) => i.market !== 'MKT')];
 
 export interface InstrumentList {
   updatedAt: string | null;
@@ -33,7 +41,7 @@ let cacheFor = '';
 
 const fromWire = (d: Wire, source: InstrumentList['source']): InstrumentList => ({
   updatedAt: d.updatedAt,
-  items: d.items.map(([code, name, market]) => ({ code, name, market })),
+  items: withMarkets(d.items.map(([code, name, market]) => ({ code, name, market }))),
   source,
 });
 
@@ -70,7 +78,7 @@ async function fetchBundled(): Promise<InstrumentList> {
   const r = await fetch(`${import.meta.env.BASE_URL}instruments.json`);
   if (!r.ok) throw new Error(`종목 목록을 받지 못했습니다 (${r.status})`);
   const d = (await r.json()) as { items: [string, string][] };
-  return { updatedAt: null, items: d.items.map(([code, name]) => ({ code, name, market: 'KR' as const })), source: 'bundled' };
+  return { updatedAt: null, items: withMarkets(d.items.map(([code, name]) => ({ code, name, market: 'KR' as const }))), source: 'bundled' };
 }
 
 /** 가장 최신 목록. 중계 서버 공유 목록이 이 브라우저 저장본보다 새것이면 저장본도 바꾼다 */
@@ -153,7 +161,8 @@ export async function refreshInstruments(proxy: Proxy, onProgress: (msg: string)
   const kr = parseDomesticMaster(await get('m_new_stock', '국내'));
   const us = parseOverseasMaster(await get('m_gtsstock', '해외'));
   if (kr.length < 1000) throw new Error(`국내 종목이 너무 적습니다 (${kr.length}) — 파일을 확인하세요`);
-  const wire: Wire = { updatedAt: new Date().toISOString(), items: [...kr, ...us].map((i) => [i.code, i.name, i.market]) };
+  // 지수 · 환율 · 금도 함께 저장 (공유 목록에서 바로 검색되도록)
+  const wire: Wire = { updatedAt: new Date().toISOString(), items: [...MARKET_INSTRUMENTS, ...kr, ...us].map((i) => [i.code, i.name, i.market]) };
   const text = JSON.stringify(wire);
   saveLocal(text);
   cacheFor = proxy.url;
@@ -171,12 +180,14 @@ export async function refreshInstruments(proxy: Proxy, onProgress: (msg: string)
 
 // ─── 검색 ─────────────────────────────────────────────────────
 
-const normCache = new WeakMap<Instrument[], string[]>();
-function normalized(list: Instrument[]): string[] {
+const normCache = new WeakMap<Instrument[], string[][]>();
+/** 종목마다 찾을 이름들 (이름 + 별칭) */
+function normalized(list: Instrument[]): string[][] {
   let n = normCache.get(list);
-  if (!n) normCache.set(list, (n = list.map((i) => norm(i.name))));
+  if (!n) normCache.set(list, (n = list.map((i) => [i.name, ...(i.aka ?? [])].map(norm))));
   return n;
 }
+const MARKET_ORDER: Record<Market, number> = { MKT: 0, KR: 1, US: 2 };
 
 /** 아이콘 찌꺼기 · '…' 를 뺀, 검색에 쓸 앞부분 */
 function queryOf(ocrName: string): string {
@@ -192,11 +203,12 @@ function queryOf(ocrName: string): string {
  */
 export function searchInstruments(list: Instrument[], ocrName: string, limit = 8): Instrument[] {
   const q = norm(queryOf(ocrName));
-  if (q.length < 2) return [];
+  if (q.length < 2 && !(q.length === 1 && /[가-힣]/.test(q))) return [];
   const names = normalized(list);
   const prefix = list
-    .filter((_, i) => names[i].startsWith(q))
-    .sort((a, b) => (a.market === b.market ? 0 : a.market === 'KR' ? -1 : 1) || a.name.length - b.name.length);
+    .filter((i, k) => (q.length >= 2 ? names[k].some((n) => n.startsWith(q)) : i.market === 'MKT' && names[k].includes(q)))
+    // 지수 · 환율 먼저, 그다음 국내 · 미국, 짧은 이름 순
+    .sort((a, b) => MARKET_ORDER[a.market] - MARKET_ORDER[b.market] || a.name.length - b.name.length);
   if (prefix.length) return prefix.slice(0, limit);
   return list
     .map((i) => ({ i, s: similarity(q, i.name) }))
@@ -210,7 +222,8 @@ export function searchInstruments(list: Instrument[], ocrName: string, limit = 8
  * 보유 종목과 못 맞춘 줄: 종목 목록에서 찾아 하나면 채우고, 여러 개면 첫 번째로 채우고 고를 수 있게 후보를 붙인다.
  * 영문 티커(TSLA)로 읽힌 줄은 미국 종목 코드로 쓴다 (목록에 있으면 한글 이름으로).
  */
-export function fillFromInstruments(rows: PhotoRow[], list: Instrument[]): PhotoRow[] {
+export function fillFromInstruments(rows: PhotoRow[], all: Instrument[]): PhotoRow[] {
+  const list = all.filter((i) => i.market !== 'MKT'); // 계좌 사진에는 지수 · 환율이 없다
   return rows.map((row) => {
     if (row.matched) return row;
     const ticker = row.ocrName.trim().toUpperCase();
@@ -227,7 +240,7 @@ export function fillFromInstruments(rows: PhotoRow[], list: Instrument[]): Photo
       code: first.code,
       currency: first.market === 'US' ? 'USD' : 'KRW',
       matched: 'list',
-      candidates: found.length > 1 ? found.map((f) => ({ code: f.code, name: f.name, market: f.market })) : undefined,
+      candidates: found.length > 1 ? found.map((f) => ({ code: f.code, name: f.name, market: f.market === 'US' ? 'US' : 'KR' })) : undefined,
     };
   });
 }

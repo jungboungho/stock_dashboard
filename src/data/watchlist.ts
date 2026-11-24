@@ -1,5 +1,6 @@
 import type { Currency } from '../types';
 import type { SyncResult } from './holdings';
+import { MARKET_BY_CODE, type MarketItem } from '../../proxy/src/markets';
 
 // ─────────────────────────────────────────────────────────────
 // 관심 종목 (엑셀 '관심종목' 시트 ↔ 화면 편집 ↔ 동기화 때 시세)
@@ -33,16 +34,12 @@ export const emptyWatchlist = (): Watchlist => ({ groups: [], items: [], quotedA
 // 코드는 종목 코드와 겹치지 않게 접두어를 붙인다 (중계 서버 MARKET_CODES 와 같은 값)
 // 코스닥 지수는 NH Open API 에서 조회되지 않아 뺐다
 export const DISCOVER_GROUP = '발견';
-export const MARKET_ITEMS: Omit<WatchItem, 'group'>[] = [
-  { code: 'IDX:KOSPI', name: '코스피', currency: 'KRW' },
-  { code: 'IDX:COMP', name: '나스닥', currency: 'USD' },
-  { code: 'IDX:SPX', name: 'S&P500', currency: 'USD' },
-  { code: 'IDX:DJI', name: '다우존스', currency: 'USD' },
-  { code: 'IDX:SOX', name: '필라델피아 반도체', currency: 'USD' },
-  { code: 'FX:USDKRW', name: '원/달러 환율', currency: 'KRW' },
-  { code: 'FX:JPYKRW', name: '원/엔 환율 (100엔)', currency: 'KRW' },
-  { code: 'GOLD:KRX', name: '금 (KRX 금현물, 1g)', currency: 'KRW' },
-];
+/** 관심 종목에 넣을 때의 모양 (미국 지수는 달러 시장이라 USD) */
+export const marketWatchItem = (m: MarketItem): Omit<WatchItem, 'group'> => ({ code: m.code, name: m.name, currency: m.region === '미국' && m.code.startsWith('IDX:') ? 'USD' : 'KRW' });
+/** '발견' 그룹 기본값 (나머지 지수 · 환율은 '+ 종목 추가'에서 검색해 넣는다) */
+const DISCOVER_CODES = ['IDX:KOSPI', 'IDX:COMP', 'IDX:SPX', 'IDX:DJI', 'IDX:SOX', 'FX:USDKRW', 'FX:JPYKRW', 'GOLD:KRX'];
+export const MARKET_ITEMS: Omit<WatchItem, 'group'>[] = DISCOVER_CODES.map((c) => marketWatchItem(MARKET_BY_CODE[c]));
+export const marketInfo = (code: string): MarketItem | undefined => MARKET_BY_CODE[code];
 
 export type MarketKind = 'index' | 'fx' | 'gold';
 export function marketKind(code: string): MarketKind | null {

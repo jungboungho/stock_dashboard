@@ -1,3 +1,4 @@
+import { MARKET_BY_CODE } from './markets';
 // ─────────────────────────────────────────────────────────────
 // NH투자증권 PLUG Open API — 조회 전용 클라이언트 (주문 API 는 없음)
 // 명세: https://www.nhplug.com/llms.txt · openapi-docs/*/openapi.json
@@ -347,30 +348,9 @@ export async function quoteUs(nh: NhClient, code: string, now = new Date()): Pro
   return { price: n(o?.trdprc) || null, change: pct === undefined || pct === null || pct === '' ? null : n(pct) / 100, ...closes, msg: s(r.rsp_msg) };
 }
 
-/**
- * 지수 · 환율 · 금 (관심 종목 '발견' 그룹). 종목 코드와 겹치지 않게 접두어를 붙인 코드로 주고받는다.
- *  - 지수 · 환율: 해외 지수/환율 기간별 시세 (코스피도 여기서만 나옴, 코스닥은 NH API 에 없음)
- *  - 금: KRX 금현물 1kg (원/g)
- */
-type MarketDef =
-  | { kind: 'index' | 'fx'; iem: string; tz: string; open: number; close: number }
-  | { kind: 'fxCross'; base: string; quote: string }
-  | { kind: 'gold'; iem: string };
-const SEOUL = { tz: 'Asia/Seoul', open: 9 * 60, close: 15 * 60 + 30 };
-const NEW_YORK = { tz: 'America/New_York', open: 9 * 60 + 30, close: 16 * 60 };
 /** 환율은 24시간 움직이므로 '종가' = 어제 마지막 값 */
 const ALL_DAY = { tz: 'Asia/Seoul', open: 0, close: 24 * 60 };
-export const MARKET_CODES: Record<string, MarketDef> = {
-  'IDX:KOSPI': { kind: 'index', iem: 'KOSPI', ...SEOUL },
-  'IDX:COMP': { kind: 'index', iem: 'COMP', ...NEW_YORK },
-  'IDX:SPX': { kind: 'index', iem: 'SPX', ...NEW_YORK },
-  'IDX:DJI': { kind: 'index', iem: '.DJI', ...NEW_YORK },
-  'IDX:SOX': { kind: 'index', iem: 'SOXX', ...NEW_YORK },
-  'FX:USDKRW': { kind: 'fx', iem: 'KRW', ...ALL_DAY },
-  // 원/엔(100엔) = (원/달러) ÷ (엔/달러) × 100
-  'FX:JPYKRW': { kind: 'fxCross', base: 'KRW', quote: 'JPY' },
-  'GOLD:KRX': { kind: 'gold', iem: 'M04020000' },
-};
+const SEOUL_GOLD = { tz: 'Asia/Seoul', open: 9 * 60, close: 15 * 60 + 30 };
 
 /** 등락 부호(1 상한 · 2 상승 · 3 보합 · 4 하한 · 5 하락)로 부호 없는 등락률을 바로잡는다 */
 export function signedPct(pct: unknown, sign: unknown): number | null {
@@ -391,33 +371,41 @@ async function indexFx(nh: NhClient, iem: string, now: Date) {
   };
 }
 
+/**
+ * 지수 · 환율 · 금 (목록은 markets.ts). 코드는 IDX: · FX: · GOLD: 접두어
+ *  - 지수 · 환율: 해외 지수/환율 기간별 시세 · 금: KRX 금현물(원/g)
+ *  - 원화 환율(cross) = 원/달러 × (그 통화 1단위의 달러 값) × per(100엔 등)
+ */
 export async function quoteMarket(nh: NhClient, code: string, now = new Date()): Promise<Quote | null> {
-  const def = MARKET_CODES[code];
+  const def = MARKET_BY_CODE[code]?.def;
   if (!def) return null;
-  if (def.kind === 'index' || def.kind === 'fx') {
+  if (def.kind === 'index') {
     const q = await indexFx(nh, def.iem, now);
     return { price: q.price, change: q.change, ...pickClose(q.days, marketClock(now, def.tz), def.open, def.close), msg: q.msg };
   }
-  if (def.kind === 'fxCross') {
-    const a = await indexFx(nh, def.base, now);
-    const b = await indexFx(nh, def.quote, now);
-    const bOn = new Map(b.days.map((d) => [d.date, d.close]));
-    const days = a.days.filter((d) => d.close && bOn.get(d.date)).map((d) => ({ date: d.date, close: (d.close / bOn.get(d.date)!) * 100 }));
-    return {
-      price: a.price && b.price ? (a.price / b.price) * 100 : null,
-      change: a.change !== null && b.change !== null ? (1 + a.change) / (1 + b.change) - 1 : null,
-      ...pickClose(days, marketClock(now, ALL_DAY.tz), ALL_DAY.open, ALL_DAY.close),
-      msg: a.msg || b.msg,
-    };
+  if (def.kind === 'fx') {
+    const own = await indexFx(nh, def.iem, now);
+    const per = def.per ?? 1;
+    const allDay = marketClock(now, ALL_DAY.tz);
+    if (!def.cross) {
+      return { price: own.price ? own.price * per : null, change: own.change, ...pickClose(own.days.map((d) => ({ date: d.date, close: d.close * per })), allDay, ALL_DAY.open, ALL_DAY.close), msg: own.msg };
+    }
+    const krw = await indexFx(nh, 'KRW', now);
+    // NH 값 v: invert 면 '그 통화 1단위 = v 달러', 아니면 '1달러 = v 그 통화'
+    const inKrw = (v: number, usdKrw: number) => (def.invert ? v : 1 / v) * usdKrw * per;
+    const krwOn = new Map(krw.days.map((d) => [d.date, d.close]));
+    const days = own.days.filter((d) => d.close && krwOn.get(d.date)).map((d) => ({ date: d.date, close: inKrw(d.close, krwOn.get(d.date)!) }));
+    const change = own.change === null || krw.change === null ? null : (1 + krw.change) * (def.invert ? 1 + own.change : 1 / (1 + own.change)) - 1;
+    return { price: own.price && krw.price ? inKrw(own.price, krw.price) : null, change, ...pickClose(days, allDay, ALL_DAY.open, ALL_DAY.close), msg: own.msg || krw.msg };
   }
-  // 금현물: 현재가 + 일별 추이(등락률은 부호가 없어 종가로 계산)
+  // 금현물: 현재가 + 일별 추이(등락률은 부호가 없어 부호로 바로잡고, 종가는 추이에서)
   const cur = await nh.call('/krgold/quote/v1/goldCurrent', { iem_cd: def.iem });
   const o = rows(cur, 'Output_0')[0];
-  const clock = marketClock(now, SEOUL.tz);
+  const clock = marketClock(now, SEOUL_GOLD.tz);
   const from = new Date(now.getTime() - 14 * 86_400_000);
-  const t = await nh.call('/krgold/quote/v1/goldDailyTrend', { iem_cd: def.iem, sdate: marketClock(from, SEOUL.tz).date, edate: clock.date, gubun: '1' });
+  const t = await nh.call('/krgold/quote/v1/goldDailyTrend', { iem_cd: def.iem, sdate: marketClock(from, SEOUL_GOLD.tz).date, edate: clock.date, gubun: '1' });
   const days = rows(t, 'Output_0').map((x) => ({ date: ymdOf(x.bsop_date), close: n(x.stck_prpr) }));
-  return { price: n(o?.stck_prpr) || null, change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign), ...pickClose(days, clock, SEOUL.open, SEOUL.close), msg: s(cur.rsp_msg) };
+  return { price: n(o?.stck_prpr) || null, change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign), ...pickClose(days, clock, SEOUL_GOLD.open, SEOUL_GOLD.close), msg: s(cur.rsp_msg) };
 }
 
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
@@ -500,7 +488,7 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   for (const a of accounts) for (const r of a.rows) if (r.code && !targets.has(r.code)) targets.set(r.code, r.currency);
   for (const [code, currency] of targets) {
     try {
-      const q = MARKET_CODES[code] ? await quoteMarket(nh, code) : currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
+      const q = MARKET_BY_CODE[code] ? await quoteMarket(nh, code) : currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
       if (!q) continue;
       if (q.change !== null) changes[code] = q.change;
       if (q.close) closes[code] = { close: q.close, date: q.closeDate, change: q.closeChange };
