@@ -74,6 +74,7 @@ import {
   type WatchItem,
 } from './data/watchlist';
 import { DUMMY_WATCHLIST } from './data/dummyWatchlist';
+import { ensureWritable, openPicker, recallHandle, rememberHandle, savePicker, writeErrorText, XLSX_TYPES, type FileHandle } from './data/fileHandle';
 import {
   COLUMNS_SETTING,
   COLUMNS_SETTING_NOTE,
@@ -122,14 +123,8 @@ let pendingPick: 'import' | 'export' = 'import';
 /** 보유 종목 표의 계좌 필터 */
 let holdAccount = 'ALL';
 
-interface FileHandle {
-  name: string;
-  getFile(): Promise<File>;
-  requestPermission?(o: { mode: 'readwrite' }): Promise<'granted' | 'denied' | 'prompt'>;
-  createWritable(): Promise<{ write(d: Blob | Uint8Array): Promise<void>; close(): Promise<void> }>;
-}
-type OpenPicker = (o: unknown) => Promise<FileHandle[]>;
-const openPicker = (window as unknown as { showOpenFilePicker?: OpenPicker }).showOpenFilePicker;
+/** 쓰지 못한 ③ 결과 (파일 골라 저장 · 내려받기 버튼용) */
+let pendingOut: Uint8Array | null = null;
 let model: DashboardData;
 let store: GroupStore;
 let state: State;
@@ -167,6 +162,8 @@ async function main() {
   restoreTheme();
   dummyModel = makeDummyModel(await loadPortfolio(new DummyProvider()));
   excelBook = loadExcel();
+  // 새로고침 전에 고른 엑셀 파일 (같은 이름일 때만) → ③ 엑셀 업데이트가 다시 고르지 않고 저장
+  if (excelBook) void recallHandle().then((h) => (excelHandle = h && h.name === excelBook?.fileName ? h : null));
   buildControls();
   instrumentsLabel();
   setModel(excelBook ? makeExcelModel(excelBook) : dummyModel);
@@ -232,6 +229,7 @@ function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | n
   excelBook = book;
   excelBytes = bytes;
   excelHandle = handle;
+  void rememberHandle(handle);
   holdAccount = 'ALL';
   // 엑셀의 그룹 시트가 기준 (샘플 데이터의 그룹과는 따로 저장)
   saveStore(MINE, storeFromGroups(book.groups));
@@ -248,7 +246,7 @@ async function pickExcel(mode: 'import' | 'export') {
   pendingPick = mode;
   if (openPicker) {
     try {
-      const [h] = await openPicker({ types: [{ description: '엑셀', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }], multiple: false });
+      const [h] = await openPicker({ types: XLSX_TYPES, multiple: false });
       let file: File;
       try {
         file = await h.getFile();
@@ -601,6 +599,12 @@ function buildControls() {
     if (act === 'add-to-group' && group) dialogAddToGroup(group);
     if (act === 'new-stock-in-group' && group) addStockDialog(group);
     if (act === 'pick-excel-fallback') $<HTMLInputElement>('excel-input').click();
+    if (act === 'save-pick') void pickSaveTarget();
+    if (act === 'save-download' && pendingOut && excelBook) {
+      downloadExcel(pendingOut, excelBook.fileName);
+      showNote(`${excelBook.fileName}을(를) 내려받았습니다. 구글 드라이브의 원본과 바꿔 주세요.`);
+      pendingOut = null;
+    }
     const { account } = b.dataset;
     if (act === 'edit-holding' && key && account) dialogHolding({ account, key }, null);
     if (act === 'delete-holding' && key && account) confirmDeleteHolding(account, key);
@@ -1350,6 +1354,7 @@ function confirmClearData() {
     excelBook = null;
     excelBytes = null;
     excelHandle = null;
+    void rememberHandle(null);
     setModel(dummyModel);
   });
 }
@@ -1447,12 +1452,79 @@ function dialogSettings(thenSync = false) {
   });
 }
 
+async function writeExcel(h: FileHandle, out: Uint8Array) {
+  const w = await h.createWritable();
+  await w.write(out);
+  await w.close();
+}
+
+function downloadExcel(out: Uint8Array, name: string) {
+  const url = URL.createObjectURL(new Blob([out as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * '저장' 창으로 업데이트할 엑셀을 고른다 (쓰기 권한이 함께 옴).
+ * 만들어 둔 결과(pendingOut)가 있으면 그대로 쓰고, 없으면 고른 파일을 읽어 ③ 엑셀 업데이트를 이어서 한다.
+ */
+/** 바로 저장하지 못했을 때: 파일 골라 저장 · 내려받기 */
+function showSaveChoices(reason: string) {
+  showNote(
+    `${escapeHtml(reason)}. <button type="button" class="btn primary" data-act="save-pick">파일 골라 저장</button> <button type="button" class="btn" data-act="save-download">내려받기</button> — "파일 골라 저장"에서 구글 드라이브의 주식.xlsx 를 고르고 바꾸기를 누르면 그 파일을 업데이트합니다. 엑셀에서 열어 두었다면 닫고 하세요.`,
+    true,
+    true,
+  );
+}
+
+async function pickSaveTarget() {
+  if (!savePicker || !excelBook) return;
+  try {
+    const h = await savePicker({ suggestedName: excelBook.fileName, types: XLSX_TYPES });
+    excelHandle = h;
+    void rememberHandle(h);
+    if (pendingOut) {
+      await writeExcel(h, pendingOut);
+      pendingOut = null;
+      showNote(`${escapeHtml(h.name)}에 저장했습니다.`);
+      return;
+    }
+    const file = await h.getFile();
+    if (!file.size) throw new Error('빈 파일입니다. 지금 쓰는 주식.xlsx 를 골라 주세요');
+    excelBytes = new Uint8Array(await file.arrayBuffer());
+    await exportExcel();
+  } catch (e) {
+    const name = (e as DOMException)?.name;
+    if (name === 'AbortError') {
+      if (pendingOut) showSaveChoices('저장할 파일을 고르지 않았습니다');
+      return;
+    }
+    if (pendingOut) showSaveChoices(`저장하지 못했습니다 (${writeErrorText(e)})`);
+    else showNote(`엑셀을 저장하지 못했습니다: ${writeErrorText(e)}`, true);
+  }
+}
+
 async function exportExcel() {
   if (!excelBook) {
     showNote('먼저 "① 엑셀 불러오기"로 주식.xlsx를 불러오세요.', true);
     return;
   }
-  // 저장 직전의 파일을 다시 읽는다 (그사이 입금내역을 고쳤어도 지우지 않도록)
+  pendingOut = null;
+  // 1) 쓰기 권한은 버튼을 누른 직후에만 요청할 수 있다 → 다른 일보다 먼저
+  let writable = false;
+  let writeError = '';
+  if (excelHandle) {
+    try {
+      writable = (await ensureWritable(excelHandle)) === 'granted';
+      if (!writable) writeError = '파일 수정 허용을 누르지 않았습니다';
+    } catch (e) {
+      writeError = writeErrorText(e);
+    }
+  }
+  // 2) 저장 직전의 파일을 다시 읽는다 (그사이 입금내역을 고쳤어도 지우지 않도록)
   let bytes = excelBytes;
   if (excelHandle) {
     try {
@@ -1462,6 +1534,11 @@ async function exportExcel() {
     }
   }
   if (!bytes) {
+    // 새로고침해서 원본이 없음: 크롬 · 엣지는 '저장' 창으로 고르게 해 쓰기 권한까지 한 번에 받는다
+    if (savePicker && !excelHandle) {
+      void pickSaveTarget();
+      return;
+    }
     showNote('새로고침해서 원본 파일이 메모리에 없습니다. 업데이트할 주식.xlsx를 골라 주세요.');
     void pickExcel('export');
     return;
@@ -1487,28 +1564,28 @@ async function exportExcel() {
     const out = upsertSheets(bytes, sheets, target && links.length ? { sheet: target.sheet, updates: links } : undefined);
     parseStockBook(readWorkbook(out), book.fileName); // 다시 읽히는지 확인
     let where: string;
-    let saved = false;
-    if (excelHandle) {
+    if (excelHandle && writable) {
       try {
-        if (excelHandle.requestPermission && (await excelHandle.requestPermission({ mode: 'readwrite' })) !== 'granted') throw new Error('권한 없음');
-        const w = await excelHandle.createWritable();
-        await w.write(out);
-        await w.close();
-        saved = true;
+        await writeExcel(excelHandle, out);
       } catch (e) {
-        if ((e as DOMException)?.name === 'AbortError') throw e;
-        excelHandle = null; // 이 파일은 바로 저장할 수 없음 → 내려받기
+        writable = false;
+        writeError = writeErrorText(e);
       }
     }
-    if (saved && excelHandle) {
+    if (excelHandle && writable) {
       where = `${excelHandle.name}에 저장했습니다`;
+    } else if (excelHandle || savePicker) {
+      // 바로 저장하지 못함 (또는 일반 방식으로 연 파일): 조용히 내려받지 않고 저장할 곳을 고르게 한다
+      pendingOut = out;
+      excelBytes = out;
+      book.groups = groups;
+      book.monthlyValues = monthly;
+      saveExcelLocal();
+      if (!excelHandle) await pickSaveTarget(); // 아직 버튼을 누른 직후라 '저장' 창을 바로 띄울 수 있다
+      else showSaveChoices(`${excelHandle.name}에 저장하지 못했습니다${writeError ? ` (${writeError})` : ''}`);
+      return;
     } else {
-      const url = URL.createObjectURL(new Blob([out as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: book.fileName });
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      downloadExcel(out, book.fileName);
       where = `${book.fileName}을(를) 내려받았습니다. 구글 드라이브의 원본과 바꿔 주세요`;
     }
     excelBytes = out;
