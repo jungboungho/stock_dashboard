@@ -73,7 +73,7 @@ export async function handle(req: Request, rawEnv: ProxyEnv, tokens: TokenStore,
         .map(([k, v]) => `${k}:${v.trim()}`);
       const serverMap = parseAccountMap(env.NH_ACCOUNTS ?? '').filter((m) => !(body.accountMap ?? {})[m.suffix]).map((m) => `${m.suffix}:${m.name}`);
       const accounts = [...serverMap, ...clientMap].join(',');
-      const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 60);
+      const quotes = (body.quotes ?? []).filter((q) => q && typeof q.code === 'string' && (q.currency === 'KRW' || q.currency === 'USD')).slice(0, 120); // 보유 + 관심 종목
       const result = await buildSync({ appKey: env.NH_APP_KEY, appSecret: env.NH_APP_SECRET, accounts, tokens }, quotes, ledger ?? null);
       return json(result);
     }

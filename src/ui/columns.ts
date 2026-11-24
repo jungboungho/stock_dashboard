@@ -2,7 +2,7 @@
 //  - '종목' 열은 항상 맨 앞, 수정 · 삭제 버튼 열은 항상 맨 뒤
 //  - 새 컬럼이 생기면 기본 위치에 끼워 넣는다
 
-export const HOLD_COLUMN_IDS = ['account', 'group', 'quantity', 'avg', 'price', 'change', 'value', 'pnl', 'rate', 'weight'] as const;
+export const HOLD_COLUMN_IDS = ['account', 'group', 'quantity', 'avg', 'price', 'change', 'close', 'closeChange', 'value', 'pnl', 'rate', 'weight'] as const;
 export type HoldColumn = (typeof HOLD_COLUMN_IDS)[number];
 
 export interface ColumnDef {
@@ -21,7 +21,9 @@ export const HOLD_COLUMNS: ColumnDef[] = [
   { id: 'quantity', label: '수량' },
   { id: 'avg', label: '평균단가' },
   { id: 'price', label: '현재가' },
-  { id: 'change', label: '등락률', note: '전일 대비 · 동기화 때 받음' },
+  { id: 'change', label: '등락률', note: '현재가의 전일 대비 · 동기화 때 받음' },
+  { id: 'close', label: '종가', note: '마지막으로 끝난 정규장 종가' },
+  { id: 'closeChange', label: '종가 등락률', note: '그 종가의 전일 대비' },
   { id: 'value', label: '평가금' },
   { id: 'pnl', label: '평가손익' },
   { id: 'rate', label: '수익률' },

@@ -21,6 +21,7 @@
         <a href="#div-card" data-target="div-card">배당</a>
         <a href="#deposit-card" data-target="deposit-card">계좌별 입금</a>
         <a href="#sec-hold" data-target="sec-hold">보유 종목</a>
+        <a href="#sec-watch" data-target="sec-watch">관심 종목</a>
       </nav>
       <div class="side-period" aria-label="기간">
         <div class="side-label">기간</div>
@@ -226,6 +227,24 @@
         </div>
         <p class="empty-state" id="hold-empty" hidden></p>
         <div class="table-wrap" id="hold-wrap"><table id="hold-table" class="data"></table></div>
+      </section>
+
+      <section class="card" aria-labelledby="watch-title" id="sec-watch">
+        <div class="card-head">
+          <div>
+            <h2 id="watch-title">관심 종목</h2>
+            <p class="hint">현재가 · 등락률은 지금 시세(미국은 주간 · 장전후 포함), 종가는 마지막으로 끝난 정규장 · ② 최신 정보 가져오기 때 갱신</p>
+          </div>
+          <span class="hint" id="watch-count"></span>
+        </div>
+        <div class="group-toolbar" id="watch-toolbar">
+          <div class="seg small chips" id="watch-group-seg" role="group" aria-label="관심 종목 그룹 (여러 개 선택)"></div>
+          <button type="button" class="btn primary" id="watch-add">+ 종목 추가</button>
+          <button type="button" class="btn" id="watch-group-add">+ 그룹</button>
+          <button type="button" class="btn" id="watch-group-edit">그룹 편집</button>
+        </div>
+        <p class="empty-state" id="watch-empty" hidden></p>
+        <div class="table-wrap" id="watch-wrap"><table id="watch-table" class="data"></table></div>
       </section>
 
       <footer class="foot" id="foot"></footer>

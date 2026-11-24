@@ -1,3 +1,4 @@
+import type { Currency } from '../types';
 import type { HoldingsState, SyncResult } from './holdings';
 import { quoteTargets } from './holdings';
 
@@ -63,7 +64,9 @@ export async function checkProxy(s: SyncSettings): Promise<{ accounts: string[] 
 }
 
 /** NH 계좌 잔고 + 나머지 계좌 종목의 현재가 */
-export async function fetchSync(s: SyncSettings, h: HoldingsState, apiAccounts: string[]): Promise<SyncResult> {
+export async function fetchSync(s: SyncSettings, h: HoldingsState, apiAccounts: string[], extra: { code: string; currency: Currency }[] = []): Promise<SyncResult> {
   // 배당은 중계 서버가 자기 장부의 최신일 − 14일부터 다시 받아 장부 전체를 돌려준다
-  return request<SyncResult>(s, '/sync', { quotes: quoteTargets(h, apiAccounts), accountMap: s.accountMap ?? {} });
+  const quotes = new Map(quoteTargets(h, apiAccounts).map((q) => [q.code, q]));
+  for (const q of extra) if (!quotes.has(q.code)) quotes.set(q.code, q); // 관심 종목
+  return request<SyncResult>(s, '/sync', { quotes: [...quotes.values()], accountMap: s.accountMap ?? {} });
 }

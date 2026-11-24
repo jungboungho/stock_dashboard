@@ -4,7 +4,7 @@ import { defaultPrefs, moveColumn, normalizePrefs, toggleColumn, visibleColumns 
 describe('보유 종목 컬럼 설정', () => {
   it('기본: 등락률은 현재가와 평가금 사이', () => {
     const v = visibleColumns(defaultPrefs());
-    expect(v.slice(v.indexOf('price'), v.indexOf('price') + 3)).toEqual(['price', 'change', 'value']);
+    expect(v.slice(v.indexOf('price'), v.indexOf('price') + 5)).toEqual(['price', 'change', 'close', 'closeChange', 'value']);
   });
 
   it('숨기기 · 다시 보이기 · 순서 바꾸기', () => {
@@ -23,7 +23,7 @@ describe('보유 종목 컬럼 설정', () => {
     // 빠진 계좌 · 그룹은 기본 자리(맨 앞), avg 는 quantity 뒤, change 는 price 뒤
     expect(p.order.slice(0, 7)).toEqual(['account', 'group', 'weight', 'quantity', 'avg', 'price', 'change']);
     expect(p.order.indexOf('change')).toBe(p.order.indexOf('price') + 1);
-    expect(p.order).toHaveLength(10);
+    expect(p.order).toHaveLength(12);
     expect(p.hidden).toEqual(['group']);
   });
 });

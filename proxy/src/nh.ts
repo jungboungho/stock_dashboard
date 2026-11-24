@@ -63,6 +63,8 @@ export interface SyncResult {
   prices: Record<string, number>;
   /** 종목코드 → 전일 대비 등락률 (0.0123 = +1.23%). NH 계좌 종목 + 물어본 종목 */
   changes: Record<string, number>;
+  /** 종목코드 → 마지막으로 끝난 정규장 종가 · 날짜(YYYYMMDD) · 그 종가의 전일 대비 */
+  closes: Record<string, { close: number; date: string | null; change: number | null }>;
   /** 중계 서버 배당 장부 전체 (NH 계좌) */
   dividends: DividendRow[];
   /** 이번에 다시 받은 시작일 (장부 최신일 − 14일, 처음이면 2년 전) */
@@ -275,18 +277,74 @@ export function mergeLedger(old: DividendRow[], fresh: Omit<DividendRow, 'fx' | 
  * 국내: 일자별 시세 최근 2일 종가로 현재가 · 등락률 (현재가 시세의 prdy_ctrt 는 부호가 없어 내린 날도 +로 옴)
  * 장중에는 첫 줄이 오늘 현재가
  */
-export async function quoteKr(nh: NhClient, code: string): Promise<{ price: number | null; change: number | null; msg: string }> {
-  const r = await nh.call('/krstock/quote/v1/currentDaily', { iem_cd: code, market_cd: 'UNT', array_cnt: '2', view_main_yn: 'Y' });
-  const [today, prev] = rows(r, 'Output_0').map((x) => n(x.stck_clpr));
-  return { price: today || null, change: today && prev ? today / prev - 1 : null, msg: s(r.rsp_msg) };
+export interface Quote {
+  price: number | null;
+  /** 현재가의 전일 대비 */
+  change: number | null;
+  /** 마지막으로 끝난 정규장 종가 · 그 날짜 · 그 종가의 전일 대비 */
+  close: number | null;
+  closeDate: string | null;
+  closeChange: number | null;
+  msg: string;
 }
 
-/** 미국: 현재가상세 (pctchng 는 부호 있는 %) */
-export async function quoteUs(nh: NhClient, code: string): Promise<{ price: number | null; change: number | null; msg: string }> {
+/** 그 시장의 현지 날짜 · 시각(분) · 요일 */
+export function marketClock(now: Date, timeZone: string): { date: string; minutes: number; weekday: number } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'short' })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
+  return { date: `${parts.year}${parts.month}${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute), weekday };
+}
+
+/**
+ * 일별 종가 목록(최신 먼저)에서 '끝난 정규장' 종가를 고른다.
+ * 첫 줄이 오늘이고 아직 장중(open~close 분)이면 그 줄은 진행 중 값이라 건너뛴다.
+ */
+export function pickClose(days: { date: string; close: number }[], clock: { date: string; minutes: number; weekday: number }, open: number, closeAt: number) {
+  const live = days[0] && days[0].date === clock.date && clock.weekday >= 1 && clock.weekday <= 5 && clock.minutes >= open && clock.minutes < closeAt;
+  const [c, prev] = live ? days.slice(1) : days;
+  return { close: c?.close || null, closeDate: c?.date ?? null, closeChange: c?.close && prev?.close ? c.close / prev.close - 1 : null };
+}
+
+const ymdOf = (v: unknown) => {
+  const d = s(v).replace(/\D/g, '');
+  return d.length === 6 ? `20${d}` : d; // '26/11/24' → 20261124
+};
+
+/**
+ * 국내: 일자별 시세(정규장) 최근 3일 → 현재가 · 등락률(첫 두 줄), 종가 · 종가 등락률(끝난 장 기준)
+ * (현재가 시세의 prdy_ctrt 는 부호가 없어 내린 날도 +로 와서 쓰지 않음)
+ */
+export async function quoteKr(nh: NhClient, code: string, now = new Date()): Promise<Quote> {
+  const r = await nh.call('/krstock/quote/v1/currentDaily', { iem_cd: code, market_cd: 'UNT', array_cnt: '3', view_main_yn: 'Y' });
+  const days = rows(r, 'Output_0').map((x) => ({ date: ymdOf(x.bsop_date), close: n(x.stck_clpr) }));
+  const [today, prev] = days;
+  return {
+    price: today?.close || null,
+    change: today?.close && prev?.close ? today.close / prev.close - 1 : null,
+    ...pickClose(days, marketClock(now, 'Asia/Seoul'), 9 * 60, 15 * 60 + 30),
+    msg: s(r.rsp_msg),
+  };
+}
+
+/** 미국: 현재가상세(주간 · 장전후 포함 현재가, pctchng 는 부호 있는 %) + 일별 시세(정규장 종가) */
+export async function quoteUs(nh: NhClient, code: string, now = new Date()): Promise<Quote> {
   const r = await nh.call('/gbstock/quote/v1/current', { iem_cd: code });
   const o = rows(r, 'Output_0')[0];
   const pct = o?.pctchng;
-  return { price: n(o?.trdprc) || null, change: pct === undefined || pct === null || pct === '' ? null : n(pct) / 100, msg: s(r.rsp_msg) };
+  const clock = marketClock(now, 'America/New_York');
+  let closes = { close: null as number | null, closeDate: null as string | null, closeChange: null as number | null };
+  try {
+    const p = await nh.call('/gbstock/quote/v1/period', { iem_cd: code, end_dt: clock.date, count: '3', maxavg: '0', gubun: '3', xtick: '0001', today_cls: '0', market_cls: '1' });
+    const days = rows(p, 'Output_1').map((x) => ({ date: ymdOf(x.trade_date), close: n(x.close_prc) }));
+    closes = pickClose(days, clock, 9 * 60 + 30, 16 * 60);
+  } catch {
+    /* 종가는 못 받아도 현재가는 쓴다 */
+  }
+  return { price: n(o?.trdprc) || null, change: pct === undefined || pct === null || pct === '' ? null : n(pct) / 100, ...closes, msg: s(r.rsp_msg) };
 }
 
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
@@ -363,6 +421,7 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   // 현재가 · 등락률: 물어본 종목 + NH 계좌 종목 (NH 계좌 종목의 현재가는 잔고 값을 그대로 쓰고 등락률만)
   const prices: Record<string, number> = {};
   const changes: Record<string, number> = {};
+  const closes: SyncResult['closes'] = {};
   const asked = new Set(quotes.map((q) => q.code));
   const targets = new Map<string, Currency>(quotes.map((q) => [q.code, q.currency]));
   for (const a of accounts) for (const r of a.rows) if (r.code && !targets.has(r.code)) targets.set(r.code, r.currency);
@@ -371,6 +430,7 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
       const q = currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
       if (!q) continue;
       if (q.change !== null) changes[code] = q.change;
+      if (q.close) closes[code] = { close: q.close, date: q.closeDate, change: q.closeChange };
       if (asked.has(code)) {
         if (q.price) prices[code] = q.price;
         else warnings.push(`${code}: 현재가 없음 (${q.msg})`);
@@ -399,5 +459,5 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     await ledger.put(JSON.stringify({ updatedAt: new Date().toISOString(), rows: book } satisfies DividendLedger));
   }
 
-  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, changes, dividends: book, dividendsFrom, unmapped, warnings };
+  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, changes, closes, dividends: book, dividendsFrom, unmapped, warnings };
 }

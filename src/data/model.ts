@@ -18,6 +18,9 @@ export interface Position {
   price: number | null;
   /** 전일 대비 등락률 (0.0123 = +1.23%), 모르면 null */
   change?: number | null;
+  /** 마지막으로 끝난 정규장 종가 (종목 통화) · 그 종가의 전일 대비 */
+  close?: number | null;
+  closeChange?: number | null;
   costKRW: number;
   valueKRW: number;
   /** 그룹 기준별 값 (assetClass · region · sector · currency ...) */

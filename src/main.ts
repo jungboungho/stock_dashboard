@@ -54,9 +54,22 @@ import {
 } from './ui/charts';
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
+import {
+  addWatchGroup,
+  addWatchItem,
+  applyWatchQuotes,
+  deleteWatchGroup,
+  moveWatchItem,
+  removeWatchItem,
+  renameWatchGroup,
+  WATCH_UNGROUPED,
+  watchItemsIn,
+  watchQuoteTargets,
+  type Watchlist,
+} from './data/watchlist';
 import { HOLD_COLUMNS, defaultPrefs, loadPrefs, moveColumn, savePrefs, toggleColumn, visibleColumns, type ColumnPrefs, type HoldColumn } from './ui/columns';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
-import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, type Instrument } from './data/instruments';
+import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, searchInstruments, type Instrument } from './data/instruments';
 import { applyLedger, resolveCode } from './data/dividends';
 
 // ─── 상태 ────────────────────────────────────────────────────
@@ -405,6 +418,7 @@ function syncSidePeriod() {
 function buildControls() {
   buildNav();
   buildColumnControls();
+  buildWatchControls();
   segButtons($('preset-seg'), PRESETS, (id) => applyPreset(id as Preset));
 
   $('return-mode').addEventListener('click', (e) => {
@@ -653,6 +667,7 @@ function renderAll() {
   renderAllocation();
   renderDividendSection();
   renderHoldings();
+  renderWatchlist();
   syncSidePeriod();
   syncNavItems();
 }
@@ -1311,7 +1326,8 @@ async function runSync() {
   showNote('NH 계좌 잔고와 현재가를 가져오는 중…');
   try {
     const book = excelBook;
-    const res = await fetchSync(settings, book.holdings, book.holdings.syncedAccounts);
+    const res = await fetchSync(settings, book.holdings, book.holdings.syncedAccounts, watchQuoteTargets(book.watchlist));
+    book.watchlist = applyWatchQuotes(book.watchlist, res);
     const next = applySync(book.holdings, res);
     // NH 배당: 중계 서버 장부(그날 환율로 원화금액 고정) 그대로, 직접 적은 기록은 유지
     let newDividends = 0;
@@ -1726,6 +1742,10 @@ function renderHoldings() {
         return priceCell(p);
       case 'change':
         return p.change == null ? '<span class="muted" title="동기화 후 표시">-</span>' : signed(p.change, pctSigned(p.change));
+      case 'close':
+        return p.close == null ? '<span class="muted" title="동기화 후 표시">-</span>' : unitPrice(p.close, p.currency);
+      case 'closeChange':
+        return p.closeChange == null ? '<span class="muted" title="동기화 후 표시">-</span>' : signed(p.closeChange, pctSigned(p.closeChange));
       case 'value':
         return won(p.valueKRW);
       case 'pnl':
@@ -1849,6 +1869,180 @@ function openColumnDialog() {
     (d.querySelector(`button[data-${up ? 'up' : 'down'}="${up ?? down}"]`) as HTMLElement | null)?.focus();
   };
   d.showModal();
+}
+
+// ─── 관심 종목 ───────────────────────────────────────────────
+
+/** 관심 종목에서 고른 그룹 (비어 있으면 전체) */
+let watchGroups: string[] = [];
+
+function watchChanged(next: Watchlist) {
+  if (!excelBook) return;
+  excelBook.watchlist = next;
+  saveExcelLocal();
+  renderWatchlist();
+}
+
+function renderWatchlist() {
+  const on = !!excelBook && model.source === 'excel';
+  $('watch-toolbar').hidden = !on;
+  if (!on) {
+    $('watch-wrap').hidden = true;
+    $('watch-empty').hidden = false;
+    $('watch-empty').textContent = '엑셀을 불러오면 관심 종목을 그룹별로 모아 볼 수 있습니다. 목록은 엑셀 \'관심종목\' 시트에 저장됩니다.';
+    $('watch-count').textContent = '';
+    return;
+  }
+  const w = excelBook!.watchlist;
+  const groups = [...w.groups, ...(w.items.some((i) => !i.group) ? [WATCH_UNGROUPED] : [])];
+  watchGroups = watchGroups.filter((g) => groups.includes(g));
+  const box = $('watch-group-seg');
+  const count = (g: string) => w.items.filter((i) => (i.group || WATCH_UNGROUPED) === g).length;
+  box.innerHTML = [{ id: '', label: `전체 ${w.items.length}` }, ...groups.map((g) => ({ id: g, label: `${g} ${count(g)}` }))]
+    .map((i) => `<button type="button" data-g="${escapeHtml(i.id)}" aria-pressed="${i.id ? watchGroups.includes(i.id) : !watchGroups.length}">${escapeHtml(i.label)}</button>`)
+    .join('');
+  box.onclick = (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-g]');
+    if (!b) return;
+    const g = b.dataset.g!;
+    if (!g) watchGroups = [];
+    else watchGroups = watchGroups.includes(g) ? watchGroups.filter((x) => x !== g) : [...watchGroups, g];
+    if (watchGroups.length === groups.length) watchGroups = [];
+    renderWatchlist();
+  };
+  $('watch-group-edit').hidden = !w.groups.length;
+
+  const items = watchItemsIn(w, watchGroups);
+  $('watch-empty').hidden = items.length > 0;
+  $('watch-wrap').hidden = items.length === 0;
+  $('watch-empty').textContent = w.items.length
+    ? '고른 그룹에 종목이 없습니다.'
+    : '"+ 그룹"으로 그룹을 만들고 "+ 종목 추가"로 종목을 넣으세요. 시세는 ② 최신 정보 가져오기 때 받습니다.';
+  $('watch-count').textContent = w.quotedAt ? `${items.length}개 · ${timeLabel(w.quotedAt)} 시세` : `${items.length}개`;
+  const dash = '<span class="muted" title="동기화 후 표시">-</span>';
+  const price = (v: number | null | undefined, c: 'KRW' | 'USD') => (v == null ? dash : unitPrice(v, c));
+  const rate = (v: number | null | undefined) => (v == null ? dash : signed(v, pctSigned(v)));
+  $('watch-table').innerHTML = `<thead><tr><th>종목</th><th class="left">그룹</th><th>현재가</th><th>등락률</th><th>종가</th><th>종가 등락률</th><th></th></tr></thead>
+    <tbody>${items
+      .map((i) => {
+        const g = i.group || WATCH_UNGROUPED;
+        return `<tr>
+          <td>${escapeHtml(i.name)}${i.name === i.code ? '' : `<span class="code">${escapeHtml(i.code)}</span>`}${i.currency === 'USD' ? ' <span class="chip">미국</span>' : ''}</td>
+          <td class="left"><span class="chip">${escapeHtml(g)}</span></td>
+          <td>${price(i.price, i.currency)}</td>
+          <td>${rate(i.change)}</td>
+          <td>${price(i.close, i.currency)}</td>
+          <td>${rate(i.closeChange)}</td>
+          <td class="actions">
+            <button type="button" class="mini" data-act="watch-move" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 그룹 바꾸기">✎</button>
+            <button type="button" class="mini danger" data-act="watch-remove" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 빼기">✕</button>
+          </td>
+        </tr>`;
+      })
+      .join('')}</tbody>`;
+}
+
+const watchGroupOptions = () => [...(excelBook?.watchlist.groups ?? []), WATCH_UNGROUPED].map((g) => ({ value: g, label: g }));
+
+function buildWatchControls() {
+  $('watch-group-add').addEventListener('click', () => {
+    if (!excelBook) return;
+    openForm({
+      title: '관심 종목 그룹 만들기',
+      description: '예: 반도체, 배당 후보, 미국 빅테크',
+      fields: [{ name: 'name', label: '그룹 이름', required: true }],
+      submitLabel: '만들기',
+      onSubmit: (v) => {
+        const next = addWatchGroup(excelBook!.watchlist, v.name);
+        watchGroups = [next.groups.at(-1)!];
+        watchChanged(next);
+      },
+    });
+  });
+  $('watch-group-edit').addEventListener('click', () => {
+    if (!excelBook?.watchlist.groups.length) return;
+    const groups = excelBook.watchlist.groups;
+    openForm({
+      title: '관심 종목 그룹 편집',
+      fields: [
+        { name: 'group', label: '그룹', type: 'select', value: watchGroups.find((g) => groups.includes(g)) ?? groups[0], options: groups.map((g) => ({ value: g, label: g })) },
+        { name: 'action', label: '할 일', type: 'select', value: 'rename', options: [{ value: 'rename', label: '이름 바꾸기' }, { value: 'delete', label: '그룹 지우기 (종목은 미분류로)' }] },
+        { name: 'name', label: '새 이름', hint: '이름 바꾸기일 때만' },
+      ],
+      onSubmit: (v) => {
+        const w = excelBook!.watchlist;
+        if (v.action === 'delete') {
+          watchGroups = watchGroups.filter((g) => g !== v.group);
+          watchChanged(deleteWatchGroup(w, v.group));
+        } else {
+          watchGroups = watchGroups.map((g) => (g === v.group ? v.name.trim() : g));
+          watchChanged(renameWatchGroup(w, v.group, v.name));
+        }
+      },
+    });
+  });
+  $('watch-add').addEventListener('click', () => void dialogWatchAdd());
+  document.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act^="watch-"]');
+    if (!b || !excelBook) return;
+    const { act, code, group } = b.dataset;
+    const w = excelBook.watchlist;
+    const item = w.items.find((i) => i.code === code && i.group === group);
+    if (!item) return;
+    if (act === 'watch-remove') {
+      openConfirm('관심 종목 빼기', `'${item.name}'을(를) ${group || WATCH_UNGROUPED}에서 뺍니다.`, '빼기', () => watchChanged(removeWatchItem(w, item.code, item.group)));
+    }
+    if (act === 'watch-move') {
+      openForm({
+        title: `${item.name} 그룹`,
+        fields: [{ name: 'group', label: '그룹', type: 'select', value: item.group || WATCH_UNGROUPED, options: watchGroupOptions() }],
+        onSubmit: (v) => watchChanged(moveWatchItem(w, item.code, item.group, v.group)),
+      });
+    }
+  });
+}
+
+/** 종목 추가: 이름 · 코드를 치면 NH 종목 목록에서 후보를 보여준다 */
+async function dialogWatchAdd() {
+  if (!excelBook) return;
+  const list = await loadInstruments(loadSyncSettings()).catch((): Instrument[] => []);
+  const defaultGroup = watchGroups.find((g) => g !== WATCH_UNGROUPED) ?? excelBook.watchlist.groups[0] ?? WATCH_UNGROUPED;
+  const resolve = (text: string): Instrument | null => {
+    const t = text.trim();
+    const code = /\(([^()]+)\)\s*(?:·\s*미국)?$/.exec(t)?.[1]?.trim().toUpperCase() ?? t.toUpperCase();
+    return list.find((i) => i.code === code) ?? list.find((i) => i.name === t) ?? searchInstruments(list, t, 1)[0] ?? null;
+  };
+  openForm({
+    title: '관심 종목 추가',
+    description: list.some((i) => i.market === 'US')
+      ? '종목 이름이나 코드(국내 6자리 · 미국 티커)를 입력하면 후보가 나옵니다.'
+      : '종목 이름이나 코드를 입력하면 후보가 나옵니다. 미국 종목은 "종목 목록 업데이트"를 한 번 누르면 이름으로도 찾을 수 있습니다.',
+    fields: [
+      { name: 'stock', label: '종목', placeholder: 'TIGER 미국S&P500 · 360750 · SCHD', required: true },
+      { name: 'group', label: '그룹', type: 'select', value: defaultGroup, options: watchGroupOptions() },
+    ],
+    submitLabel: '추가',
+    onSubmit: (v) => {
+      let found = resolve(v.stock);
+      // 목록에 없는 미국 티커도 그대로 받는다
+      if (!found && /^[A-Za-z.]{1,6}$/.test(v.stock.trim())) found = { code: v.stock.trim().toUpperCase(), name: v.stock.trim().toUpperCase(), market: 'US' };
+      if (!found) throw new Error('종목 목록에서 찾지 못했습니다. 이름을 더 정확히 입력하거나 코드를 넣어 보세요');
+      watchChanged(addWatchItem(excelBook!.watchlist, { code: found.code, name: found.name, currency: found.market === 'US' ? 'USD' : 'KRW' }, v.group));
+      showNote(`${found.name}을(를) 관심 종목에 넣었습니다. 시세는 "② 최신 정보 가져오기" 때 받습니다.`);
+    },
+  });
+  // 입력하는 대로 후보 (datalist)
+  const input = document.getElementById('f-stock') as HTMLInputElement | null;
+  if (!input) return;
+  const dl = document.createElement('datalist');
+  dl.id = 'watch-suggest';
+  input.after(dl);
+  input.setAttribute('list', dl.id);
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    const hits = q.length < 1 ? [] : [...list.filter((i) => i.code === q.toUpperCase()), ...searchInstruments(list, q, 12)].slice(0, 12);
+    dl.innerHTML = hits.map((i) => `<option value="${escapeHtml(`${i.name} (${i.code})${i.market === 'US' ? ' · 미국' : ''}`)}"></option>`).join('');
+  });
 }
 
 main().catch((e) => {

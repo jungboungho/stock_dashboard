@@ -3,6 +3,7 @@ import type { YearStart } from '../model';
 import type { Currency, ISODate } from '../../types';
 import { emptyHoldings, holdingKey, type HoldingsState } from '../holdings';
 import type { DividendEntry } from '../dividends';
+import { emptyWatchlist, WATCH_UNGROUPED, type Watchlist } from '../watchlist';
 
 /**
  * 사용자가 관리하던 '주식.xlsx' 구조를 읽어 앱 데이터로 바꾼다.
@@ -66,6 +67,8 @@ export interface ExcelBook {
   monthlyValues: Record<string, number>;
   /** 동기화로 확인한 NH 계좌 (끝자리 · 대시보드 이름, 이름 없으면 null) → ③ 엑셀 업데이트 때 '설정' 시트에 줄 추가 */
   nhAccounts?: { suffix: string; name: string | null }[];
+  /** '관심종목' 시트 */
+  watchlist: Watchlist;
 }
 
 /** 예전(v2)에 저장된 값도 읽는다 */
@@ -80,6 +83,7 @@ export function upgradeBook(raw: unknown): ExcelBook | null {
     groups: b.groups ?? [],
     dailyLog: b.dailyLog ?? dailyFromLong(snapshotLog ?? []),
     dividends: b.dividends ?? [],
+    watchlist: b.watchlist ?? emptyWatchlist(),
     monthlyValues: b.monthlyValues ?? {},
   };
 }
@@ -92,6 +96,7 @@ export const DAILY_SHEET = '일별 자산추이';
 export const MONTHLY_SHEET = '월별 자산추이';
 export const TOTAL_LABEL = '합계';
 export const DIVIDEND_SHEET = '배당';
+export const WATCH_SHEET = '관심종목';
 export const CASH_CODE = '현금';
 export const SETTINGS_SHEET = '설정';
 export const SETTING_URL = '중계 서버 주소';
@@ -319,6 +324,7 @@ export function parseStockBook(book: Workbook, fileName = '주식.xlsx'): ExcelB
     groups: parseGroups(book),
     dailyLog: parseDaily(book),
     dividends: parseDividends(book, holdings.usdKrw ?? usdKrw),
+    watchlist: parseWatchlist(book),
     monthlyValues: parseMonthly(book),
   };
 }
@@ -366,6 +372,8 @@ export function parseHoldings(book: Workbook): HoldingsState {
       avgPrice: num(r['평균단가']) ?? 0,
       price: num(r['현재가']) ?? null,
       change: num(r['등락률']) ?? null,
+      close: num(r['종가']) ?? null,
+      closeChange: num(r['종가등락률']) ?? null,
       costKRW: num(r['매입금액(원)']) ?? null,
     });
   }
@@ -467,6 +475,29 @@ export function parseDividends(book: Workbook, usdKrw: number): DividendEntry[] 
     out.push({ date, account, code: str(r['종목코드']).toUpperCase(), name: str(r['종목명']), currency, amount, fx, krw, source: str(r['출처']).toUpperCase() === 'API' ? 'API' : '직접' });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** '관심종목' 시트: 그룹 · 종목코드 · 종목명 · 통화 (+ 마지막 시세). 종목코드가 빈 줄은 빈 그룹 */
+export function parseWatchlist(book: Workbook): Watchlist {
+  const w = emptyWatchlist();
+  for (const r of table(findSheet(book, WATCH_SHEET), ['그룹', '종목코드'])) {
+    const g = str(r['그룹']);
+    const group = g === WATCH_UNGROUPED ? '' : g;
+    if (group && !w.groups.includes(group)) w.groups.push(group);
+    const code = str(r['종목코드']).toUpperCase();
+    if (!code || w.items.some((i) => i.code === code && i.group === group)) continue;
+    w.items.push({
+      code,
+      name: str(r['종목명']) || code,
+      currency: currencyOf(r['통화']),
+      group,
+      price: num(r['현재가']) ?? null,
+      change: num(r['등락률']) ?? null,
+      close: num(r['종가']) ?? null,
+      closeChange: num(r['종가등락률']) ?? null,
+    });
+  }
+  return w;
 }
 
 export function parseMonthly(book: Workbook): Record<string, number> {

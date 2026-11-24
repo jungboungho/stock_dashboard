@@ -64,6 +64,8 @@ export function makePortfolioModel(
           avgPrice: h.avgCostKRW / fx,
           price: h.price,
           change: changeOf(h.instrument.code),
+          close: h.price,
+          closeChange: changeOf(h.instrument.code),
           costKRW: h.costKRW,
           valueKRW: h.valueKRW,
           attrs: { assetClass: h.instrument.assetClass, region: h.instrument.region, sector: h.instrument.sector },

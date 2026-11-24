@@ -6,6 +6,7 @@ import {
   CASH_CODE,
   DAILY_SHEET,
   DIVIDEND_SHEET,
+  WATCH_SHEET,
   GROUPS_SHEET,
   HOLDINGS_SHEET,
   MONTHLY_SHEET,
@@ -70,9 +71,9 @@ export function buildExportSheets(book: ExcelBook, groups: ExcelGroup[], today =
     .map((r) => {
       const value = rowValueKRW(r, usdKrw);
       const cost = rowCostKRW(r, usdKrw);
-      return [date, r.account, r.code, r.name, r.currency, r.quantity, round(r.avgPrice, 4), r.price, r.change == null ? null : round(r.change, 6), r.currency === 'USD' ? usdKrw : null, round(cost), round(value), round(value - cost), groupOf.get(holdingKey(r)) ?? ''];
+      return [date, r.account, r.code, r.name, r.currency, r.quantity, round(r.avgPrice, 4), r.price, r.change == null ? null : round(r.change, 6), r.close ?? null, r.closeChange == null ? null : round(r.closeChange, 6), r.currency === 'USD' ? usdKrw : null, round(cost), round(value), round(value - cost), groupOf.get(holdingKey(r)) ?? ''];
     });
-  const cashRows = h.cash.map((c) => [date, c.account, CASH_CODE, CASH_CODE, c.currency, c.amount, null, null, null, c.currency === 'USD' ? usdKrw : null, null, round(c.amount * (c.currency === 'USD' ? usdKrw : 1)), null, '']);
+  const cashRows = h.cash.map((c) => [date, c.account, CASH_CODE, CASH_CODE, c.currency, c.amount, null, null, null, null, null, c.currency === 'USD' ? usdKrw : null, null, round(c.amount * (c.currency === 'USD' ? usdKrw : 1)), null, '']);
 
   // ── 그룹
   const names = new Map(h.rows.map((r) => [holdingKey(r), r]));
@@ -117,8 +118,8 @@ export function buildExportSheets(book: ExcelBook, groups: ExcelGroup[], today =
   return [
     {
       name: HOLDINGS_SHEET,
-      widths: [11, 8, 10, 30, 6, 10, 11, 11, 9, 9, 14, 14, 14, 10],
-      rows: [['기준일', '계좌', '종목코드', '종목명', '통화', '수량', '평균단가', '현재가', '등락률', '환율', '매입금액(원)', '평가금액(원)', '평가손익(원)', '그룹'], ...holdingRows, ...cashRows],
+      widths: [11, 8, 10, 30, 6, 10, 11, 11, 9, 11, 9, 9, 14, 14, 14, 10],
+      rows: [['기준일', '계좌', '종목코드', '종목명', '통화', '수량', '평균단가', '현재가', '등락률', '종가', '종가등락률', '환율', '매입금액(원)', '평가금액(원)', '평가손익(원)', '그룹'], ...holdingRows, ...cashRows],
     },
     { name: GROUPS_SHEET, widths: [12, 10, 30], rows: [['그룹', '종목코드', '종목명'], ...groupRows] },
     {
@@ -126,6 +127,19 @@ export function buildExportSheets(book: ExcelBook, groups: ExcelGroup[], today =
       renameFrom: OLD_SNAPSHOT_SHEET,
       widths: [11, 15, 15, 15, 9, ...accountCols.map(() => 14)],
       rows: [['날짜', '총자산(원)', '투자원금(원)', '수익금(원)', '수익률', ...accountCols], ...dailyRows],
+    },
+    {
+      name: WATCH_SHEET,
+      widths: [14, 10, 32, 6, 11, 9, 11, 10],
+      rows: [
+        ['그룹', '종목코드', '종목명', '통화', '현재가', '등락률', '종가', '종가등락률'],
+        // 그룹 순서대로 · 종목이 없는 그룹은 종목코드가 빈 줄 하나로 남긴다
+        ...[...book.watchlist.groups, ''].flatMap((g) => {
+          const items = book.watchlist.items.filter((i) => i.group === g);
+          if (!items.length) return g ? [[g, null, null, null, null, null, null, null]] : [];
+          return items.map((i) => [i.group || '미분류', i.code, i.name, i.currency, i.price ?? null, i.change == null ? null : round(i.change, 6), i.close ?? null, i.closeChange == null ? null : round(i.closeChange, 6)]);
+        }),
+      ],
     },
     {
       name: DIVIDEND_SHEET,

@@ -91,6 +91,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     book.holdings = h;
     const groups = [{ name: '배당주', keys: ['SCHD'] }, { name: '채권', keys: [] }];
     book.dailyLog = upsertDaily([{ date: '2026-11-01', total: 1, accounts: { ISA: 1 } }], h, 1400, '2026-11-23');
+    book.watchlist = { groups: ['반도체', '빈 그룹'], items: [{ code: 'NVDA', name: '엔비디아', currency: 'USD', group: '반도체', price: 180, change: 0.01, close: 178, closeChange: -0.02 }, { code: '005930', name: '삼성전자', currency: 'KRW', group: '' }], quotedAt: null };
     const out1 = upsertSheets(src, buildExportSheets(book, groups, '2026-11-30'));
     const again = parseStockBook(readWorkbook(out1), 'test.xlsx');
     expect(again.months).toEqual(book.months); // Summary 그대로
@@ -103,6 +104,8 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     expect(again.holdings.usdKrw).toBe(1400);
     expect(again.holdings.asOf?.slice(0, 10)).toBe('2026-11-23');
     expect(again.groups).toEqual(groups);
+    expect(again.watchlist.groups).toEqual(['반도체', '빈 그룹']); // 종목 없는 그룹도 순서대로 남음
+    expect(again.watchlist.items).toEqual(book.watchlist.items.map((i) => ({ price: null, change: null, close: null, closeChange: null, ...i })));
     expect(again.dailyLog.map((d) => [d.date, d.total, d.accounts['종합'] ?? null])).toEqual([
       ['2026-11-01', 1, null],
       ['2026-11-23', 220_000 + 84_000 + 14_000, 98_000],
@@ -113,7 +116,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     book.holdings = removeHolding(h, 'ISA', '360750');
     const out2 = upsertSheets(out1, buildExportSheets(book, groups, '2026-11-30'));
     const wb2 = readWorkbook(out2);
-    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '일별 자산추이', '배당', '월별 자산추이']);
+    expect(Object.keys(wb2)).toEqual(['Summary', '입금내역', '보유종목', '그룹', '일별 자산추이', '관심종목', '배당', '월별 자산추이']);
     expect(parseStockBook(wb2).holdings.rows).toHaveLength(1);
   });
 
@@ -122,7 +125,7 @@ describe('엑셀 업데이트 (보유종목 · 그룹 · 일별 / 월별 자산�
     const book = parseStockBook(readWorkbook(old), 'test.xlsx');
     expect(book.dailyLog).toEqual([{ date: '2026-11-20', total: 100, accounts: { ISA: 100 } }]);
     const out = upsertSheets(old, buildExportSheets(book, [], '2026-11-30'));
-    expect(Object.keys(readWorkbook(out))).toEqual(['Summary', '입금내역', '일별 자산추이', '설정', '보유종목', '그룹', '배당', '월별 자산추이']);
+    expect(Object.keys(readWorkbook(out))).toEqual(['Summary', '입금내역', '일별 자산추이', '설정', '보유종목', '그룹', '관심종목', '배당', '월별 자산추이']);
   });
 
   it('Summary 기말자산은 일별 기록이 시작된 달부터 월별 자산추이와 수식으로 연결', () => {
@@ -196,6 +199,8 @@ describe('NH 중계 서버 응답 변환', () => {
         // 국내 현재가 · 등락률: 최근 2일 종가 (현재가 시세의 등락률은 부호가 없어서 쓰지 않음)
         '/krstock/quote/v1/currentDaily': { rsp_msg: '조회가 완료되었습니다.', Output_0: [{ bsop_date: '26/11/24', stck_clpr: 23680 }, { bsop_date: '26/11/23', stck_clpr: 24000 }] },
         '/gbstock/quote/v1/current': { rsp_msg: '조회완료', Output_0: { iem_cd: body.iem_cd, trdprc: 81, pctchng: -0.16 } },
+        // 미국 종가: 일별 정규장 종가 (최신 먼저)
+        '/gbstock/quote/v1/period': { rsp_msg: '조회완료', Output_1: [{ trade_date: '20261120', close_prc: '80.00' }, { trade_date: '20261119', close_prc: '78.00' }] },
       };
       return new Response(JSON.stringify(reply[path] ?? {}), { status: 200 });
     }) as typeof fetch;
@@ -209,6 +214,8 @@ describe('NH 중계 서버 응답 변환', () => {
     expect(res.prices).toEqual({ '360750': 23680 }); // NH 계좌 종목(TLT)은 잔고 값을 쓰므로 현재가는 안 돌려줌
     expect(res.changes['360750']).toBeCloseTo(23680 / 24000 - 1, 10); // 내린 날도 음수로
     expect(res.changes.TLT).toBeCloseTo(-0.0016, 10);
+    expect(res.closes.TLT).toMatchObject({ close: 80, date: '20261120' });
+    expect(res.closes.TLT.change).toBeCloseTo(80 / 78 - 1, 10);
     expect(res.usdKrw).toBe(1337);
     expect(res.warnings[0]).toContain('금계좌');
   });
