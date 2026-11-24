@@ -89,20 +89,41 @@ describe('종가 고르기', () => {
   it('장중이면 오늘 줄은 진행 중 값이라 건너뛴다', () => {
     const clock = marketClock(new Date('2026-11-24T02:00:00Z'), 'Asia/Seoul'); // 서울 11:00 (화)
     expect(clock).toEqual({ date: '20261124', minutes: 660, weekday: 2 });
-    const r = pickClose(days, clock, 540, 930);
+    const r = pickClose(days, clock, 930);
     expect(r.close).toBe(100);
     expect(r.closeChange).toBeCloseTo(100 / 80 - 1, 10);
   });
   it('장이 끝났으면 오늘 종가', () => {
     const clock = marketClock(new Date('2026-11-24T07:00:00Z'), 'Asia/Seoul'); // 서울 16:00
-    const r = pickClose(days, clock, 540, 930);
+    const r = pickClose(days, clock, 930);
     expect(r).toMatchObject({ close: 105, closeDate: '20261124' });
     expect(r.closeChange).toBeCloseTo(0.05, 10);
   });
+  it('장 시작 전: NH 가 미리 만든 오늘 줄(전일 종가 그대로)은 쓰지 않는다', () => {
+    // 2026-11-24 09:35 UTC = 뉴욕 04:35 (장 전). 오늘 줄 385.46 은 어제 종가를 복사한 값
+    const clock = marketClock(new Date('2026-11-24T09:35:00Z'), 'America/New_York');
+    const r = pickClose(
+      [
+        { date: '20261124', close: 385.46 },
+        { date: '20261123', close: 385.46 },
+        { date: '20261120', close: 345.82 },
+      ],
+      clock,
+      960,
+    );
+    expect(r).toMatchObject({ close: 385.46, closeDate: '20261123' });
+    expect(r.closeChange).toBeCloseTo(385.46 / 345.82 - 1, 10);
+  });
+
+  it('주말에는 마지막 줄(금요일) 그대로', () => {
+    const clock = marketClock(new Date('2026-11-21T15:00:00Z'), 'America/New_York'); // 토요일 10:00
+    expect(pickClose(days.slice(1), clock, 960).close).toBe(100);
+  });
+
   it('뉴욕 시간으로 판단한다', () => {
     const clock = marketClock(new Date('2026-11-24T15:00:00Z'), 'America/New_York'); // 뉴욕 10:00
     expect(clock.minutes).toBe(600);
-    expect(pickClose(days, clock, 570, 960).close).toBe(100);
+    expect(pickClose(days, clock, 960).close).toBe(100);
   });
 });
 

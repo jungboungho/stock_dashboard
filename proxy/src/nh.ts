@@ -302,10 +302,12 @@ export function marketClock(now: Date, timeZone: string): { date: string; minute
 
 /**
  * 일별 종가 목록(최신 먼저)에서 '끝난 정규장' 종가를 고른다.
- * 첫 줄이 오늘이고 아직 장중(open~close 분)이면 그 줄은 진행 중 값이라 건너뛴다.
+ * 첫 줄이 오늘(평일)이고 그 시장의 장이 아직 끝나지 않았으면(장 전 · 장중) 그 줄은 건너뛴다.
+ * NH 미국 일별 시세는 장 시작 전에도 오늘 줄을 만들어 전일 종가를 그대로 넣어 두므로,
+ * 장 전에 그 줄을 쓰면 종가 등락률이 0% 가 된다.
  */
-export function pickClose(days: { date: string; close: number }[], clock: { date: string; minutes: number; weekday: number }, open: number, closeAt: number) {
-  const live = days[0] && days[0].date === clock.date && clock.weekday >= 1 && clock.weekday <= 5 && clock.minutes >= open && clock.minutes < closeAt;
+export function pickClose(days: { date: string; close: number }[], clock: { date: string; minutes: number; weekday: number }, closeAt: number) {
+  const live = days[0] && days[0].date === clock.date && clock.weekday >= 1 && clock.weekday <= 5 && clock.minutes < closeAt;
   const [c, prev] = live ? days.slice(1) : days;
   return { close: c?.close || null, closeDate: c?.date ?? null, closeChange: c?.close && prev?.close ? c.close / prev.close - 1 : null };
 }
@@ -326,7 +328,7 @@ export async function quoteKr(nh: NhClient, code: string, now = new Date()): Pro
   return {
     price: today?.close || null,
     change: today?.close && prev?.close ? today.close / prev.close - 1 : null,
-    ...pickClose(days, marketClock(now, 'Asia/Seoul'), 9 * 60, 15 * 60 + 30),
+    ...pickClose(days, marketClock(now, 'Asia/Seoul'), 15 * 60 + 30),
     msg: s(r.rsp_msg),
   };
 }
@@ -341,7 +343,7 @@ export async function quoteUs(nh: NhClient, code: string, now = new Date()): Pro
   try {
     const p = await nh.call('/gbstock/quote/v1/period', { iem_cd: code, end_dt: clock.date, count: '3', maxavg: '0', gubun: '3', xtick: '0001', today_cls: '0', market_cls: '1' });
     const days = rows(p, 'Output_1').map((x) => ({ date: ymdOf(x.trade_date), close: n(x.close_prc) }));
-    closes = pickClose(days, clock, 9 * 60 + 30, 16 * 60);
+    closes = pickClose(days, clock, 16 * 60);
   } catch {
     /* 종가는 못 받아도 현재가는 쓴다 */
   }
@@ -381,14 +383,14 @@ export async function quoteMarket(nh: NhClient, code: string, now = new Date()):
   if (!def) return null;
   if (def.kind === 'index') {
     const q = await indexFx(nh, def.iem, now);
-    return { price: q.price, change: q.change, ...pickClose(q.days, marketClock(now, def.tz), def.open, def.close), msg: q.msg };
+    return { price: q.price, change: q.change, ...pickClose(q.days, marketClock(now, def.tz), def.close), msg: q.msg };
   }
   if (def.kind === 'fx') {
     const own = await indexFx(nh, def.iem, now);
     const per = def.per ?? 1;
     const allDay = marketClock(now, ALL_DAY.tz);
     if (!def.cross) {
-      return { price: own.price ? own.price * per : null, change: own.change, ...pickClose(own.days.map((d) => ({ date: d.date, close: d.close * per })), allDay, ALL_DAY.open, ALL_DAY.close), msg: own.msg };
+      return { price: own.price ? own.price * per : null, change: own.change, ...pickClose(own.days.map((d) => ({ date: d.date, close: d.close * per })), allDay, ALL_DAY.close), msg: own.msg };
     }
     const krw = await indexFx(nh, 'KRW', now);
     // NH 값 v: invert 면 '그 통화 1단위 = v 달러', 아니면 '1달러 = v 그 통화'
@@ -396,7 +398,7 @@ export async function quoteMarket(nh: NhClient, code: string, now = new Date()):
     const krwOn = new Map(krw.days.map((d) => [d.date, d.close]));
     const days = own.days.filter((d) => d.close && krwOn.get(d.date)).map((d) => ({ date: d.date, close: inKrw(d.close, krwOn.get(d.date)!) }));
     const change = own.change === null || krw.change === null ? null : (1 + krw.change) * (def.invert ? 1 + own.change : 1 / (1 + own.change)) - 1;
-    return { price: own.price && krw.price ? inKrw(own.price, krw.price) : null, change, ...pickClose(days, allDay, ALL_DAY.open, ALL_DAY.close), msg: own.msg || krw.msg };
+    return { price: own.price && krw.price ? inKrw(own.price, krw.price) : null, change, ...pickClose(days, allDay, ALL_DAY.close), msg: own.msg || krw.msg };
   }
   // 금현물: 현재가 + 일별 추이(등락률은 부호가 없어 부호로 바로잡고, 종가는 추이에서)
   const cur = await nh.call('/krgold/quote/v1/goldCurrent', { iem_cd: def.iem });
@@ -405,7 +407,7 @@ export async function quoteMarket(nh: NhClient, code: string, now = new Date()):
   const from = new Date(now.getTime() - 14 * 86_400_000);
   const t = await nh.call('/krgold/quote/v1/goldDailyTrend', { iem_cd: def.iem, sdate: marketClock(from, SEOUL_GOLD.tz).date, edate: clock.date, gubun: '1' });
   const days = rows(t, 'Output_0').map((x) => ({ date: ymdOf(x.bsop_date), close: n(x.stck_prpr) }));
-  return { price: n(o?.stck_prpr) || null, change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign), ...pickClose(days, clock, SEOUL_GOLD.open, SEOUL_GOLD.close), msg: s(cur.rsp_msg) };
+  return { price: n(o?.stck_prpr) || null, change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign), ...pickClose(days, clock, SEOUL_GOLD.close), msg: s(cur.rsp_msg) };
 }
 
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
