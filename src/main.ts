@@ -73,6 +73,7 @@ import {
   type Watchlist,
   type WatchItem,
 } from './data/watchlist';
+import { DUMMY_WATCHLIST } from './data/dummyWatchlist';
 import { HOLD_COLUMNS, defaultPrefs, loadPrefs, moveColumn, savePrefs, toggleColumn, visibleColumns, type ColumnPrefs, type HoldColumn } from './ui/columns';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, searchInstruments, type Instrument } from './data/instruments';
@@ -1919,16 +1920,10 @@ function watchChanged(next: Watchlist) {
 }
 
 function renderWatchlist() {
+  // 엑셀을 불러오기 전에는 샘플 목록을 읽기 전용으로 (그룹 고르기만 됨)
   const on = !!excelBook && model.source === 'excel';
-  $('watch-toolbar').hidden = !on;
-  if (!on) {
-    $('watch-wrap').hidden = true;
-    $('watch-empty').hidden = false;
-    $('watch-empty').textContent = '엑셀을 불러오면 관심 종목을 그룹별로 모아 볼 수 있습니다. 목록은 엑셀 \'관심종목\' 시트에 저장됩니다.';
-    $('watch-count').textContent = '';
-    return;
-  }
-  const w = excelBook!.watchlist;
+  for (const id of ['watch-add', 'watch-group-add']) $(id).hidden = !on;
+  const w = on ? excelBook!.watchlist : DUMMY_WATCHLIST;
   const groups = [...w.groups, ...(w.items.some((i) => !i.group) ? [WATCH_UNGROUPED] : [])];
   watchGroups = watchGroups.filter((g) => groups.includes(g));
   const box = $('watch-group-seg');
@@ -1945,8 +1940,8 @@ function renderWatchlist() {
     if (watchGroups.length === groups.length) watchGroups = [];
     renderWatchlist();
   };
-  $('watch-group-edit').hidden = !w.groups.length;
-  $('watch-market-add').hidden = missingMarketItems(w) === 0;
+  $('watch-group-edit').hidden = !on || !w.groups.length;
+  $('watch-market-add').hidden = !on || missingMarketItems(w) === 0;
 
   const items = watchItemsIn(w, watchGroups);
   $('watch-empty').hidden = items.length > 0;
@@ -1954,7 +1949,7 @@ function renderWatchlist() {
   $('watch-empty').textContent = w.items.length
     ? '고른 그룹에 종목이 없습니다.'
     : '"+ 그룹"으로 그룹을 만들고 "+ 종목 추가"로 종목을 넣으세요. 시세는 ② 최신 정보 가져오기 때 받습니다.';
-  $('watch-count').textContent = w.quotedAt ? `${items.length}개 · ${timeLabel(w.quotedAt)} 시세` : `${items.length}개`;
+  $('watch-count').textContent = !on ? `샘플 ${items.length}개 · 값은 임의` : w.quotedAt ? `${items.length}개 · ${timeLabel(w.quotedAt)} 시세` : `${items.length}개`;
   const dash = '<span class="muted" title="동기화 후 표시">-</span>';
   // 지수는 포인트, 환율은 소수 둘째 자리까지 원, 금은 원/g
   const price = (v: number | null | undefined, i: WatchItem) => {
@@ -1981,9 +1976,9 @@ function renderWatchlist() {
           <td>${rate(i.change)}</td>
           <td>${price(i.close, i)}</td>
           <td>${rate(i.closeChange)}</td>
-          <td class="actions">
+          <td class="actions">${on ? `
             <button type="button" class="mini" data-act="watch-move" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 그룹 바꾸기">✎</button>
-            <button type="button" class="mini danger" data-act="watch-remove" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 빼기">✕</button>
+            <button type="button" class="mini danger" data-act="watch-remove" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 빼기">✕</button>` : ''}
           </td>
         </tr>`;
       })
