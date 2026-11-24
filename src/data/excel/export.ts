@@ -23,15 +23,30 @@ import type { Workbook } from './xlsx';
 const NH_LABEL = /^NH\s*계좌\s*(\d{3,6})$/;
 
 /**
- * '설정' 시트에 아직 없는 NH 계좌 줄을 덧붙인다 (기존 내용은 그대로).
+ * '설정' 시트에 아직 없는 NH 계좌 줄을 덧붙이고, values 의 줄(A열 항목)은 B열 값을 바꾸거나 덧붙인다 (나머지 내용은 그대로).
  * 이름이 정해진 계좌는 B열에 이름을, 새 계좌는 B열을 비워 둔다 (사용자가 채우면 다음 동기화부터 반영).
- * 덧붙일 줄이 없으면 null (시트를 다시 쓰지 않음).
+ * 바뀌는 게 없으면 null (시트를 다시 쓰지 않음).
  */
-export function settingsWithNhAccounts(wb: Workbook, accounts: { suffix: string; name: string | null }[]): SheetData | null {
+export function settingsWithNhAccounts(
+  wb: Workbook,
+  accounts: { suffix: string; name: string | null }[],
+  values: { label: string; value: string; note: string }[] = [],
+): (SheetData & { addedAccounts: number; changedValues: string[] }) | null {
   const rows = sheetRows(wb, SETTINGS_SHEET) ?? [['항목', '값', '설명']];
+  const changedValues: string[] = [];
+  for (const v of values) {
+    const row = rows.find((r) => String(r[0] ?? '').trim() === v.label);
+    if (!row) {
+      rows.push([v.label, v.value, v.note]);
+      changedValues.push(v.label);
+    } else if (String(row[1] ?? '').trim() !== v.value) {
+      row[1] = v.value;
+      changedValues.push(v.label);
+    }
+  }
   const have = new Set(rows.map((r) => NH_LABEL.exec(String(r[0] ?? '').trim())?.[1]).filter(Boolean));
   const add = accounts.filter((a) => !have.has(a.suffix));
-  if (!add.length) return null;
+  if (!add.length && !changedValues.length) return null;
   for (const a of add) {
     rows.push([
       `NH 계좌 ${a.suffix}`,
@@ -39,7 +54,7 @@ export function settingsWithNhAccounts(wb: Workbook, accounts: { suffix: string;
       a.name ? 'NH 동기화로 반영되는 계좌' : '새로 응답한 NH 계좌 — B열에 대시보드 계좌 이름(예: ISA)을 적고 엑셀을 다시 불러오면 다음 동기화부터 반영',
     ]);
   }
-  return { name: SETTINGS_SHEET, widths: [18, 70, 50], rows };
+  return { name: SETTINGS_SHEET, widths: [18, 70, 50], rows, addedAccounts: add.length, changedValues };
 }
 
 /** 그룹 설정(화면) → 엑셀 '그룹' 시트에 쓸 목록 */

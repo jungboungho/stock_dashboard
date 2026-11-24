@@ -418,6 +418,15 @@ export function parseSyncSettings(book: Workbook): { url: string; token: string;
   return url && token ? { url, token, accountMap } : null;
 }
 
+/** '설정' 시트에서 항목(어느 칸이든) 오른쪽 칸 값 */
+export function settingValue(book: Workbook, label: string): string | null {
+  const cells = findSheet(book, SETTINGS_SHEET);
+  if (!cells) return null;
+  const g = grid(cells);
+  for (const r of g.rows) for (let c = 1; c < g.maxCol; c++) if (str(g.get(c, r)) === label) return str(g.get(c + 1, r)) || null;
+  return null;
+}
+
 /** 예전 '자산스냅샷'(기준일 · 계좌 · 평가금액) → 일별 행 */
 function dailyFromLong(rows: { date: ISODate; account: string; value: number }[]): DailyRow[] {
   const byDate = new Map<string, DailyRow>();

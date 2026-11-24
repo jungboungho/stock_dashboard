@@ -82,3 +82,34 @@ export function toggleColumn(p: ColumnPrefs, id: HoldColumn, show: boolean): Col
 }
 
 export const visibleColumns = (p: ColumnPrefs): HoldColumn[] => p.order.filter((c) => !p.hidden.includes(c));
+
+// ─── 엑셀 '설정' 시트의 '보유종목 컬럼' 줄 (다른 기기와 맞추기) ───
+//  값: 보이는 순서대로 쉼표로, 숨긴 컬럼은 앞에 '-'  예) 계좌, 그룹, 수량, -평균단가, 현재가, …
+
+export const COLUMNS_SETTING = '보유종목 컬럼';
+export const COLUMNS_SETTING_NOTE = "보유 종목 표 컬럼 순서 (쉼표로 구분, 앞에 '-' 를 붙이면 숨김). ③ 엑셀 업데이트가 화면 설정을 저장하고, ① 엑셀 불러오기 때 그 기기에 적용";
+
+const LABEL_TO_ID = new Map<string, HoldColumn>(HOLD_COLUMNS.flatMap((c) => [[c.label.replace(/\s/g, ''), c.id], [c.id.toLowerCase(), c.id]] as [string, HoldColumn][]));
+
+export function prefsToText(p: ColumnPrefs): string {
+  const label = new Map(HOLD_COLUMNS.map((c) => [c.id, c.label]));
+  return p.order.map((id) => `${p.hidden.includes(id) ? '-' : ''}${label.get(id)}`).join(', ');
+}
+
+/** 읽을 수 없는 값이면 null. 빠진 컬럼은 기본 위치에 보이게 넣는다 */
+export function prefsFromText(text: string): ColumnPrefs | null {
+  const order: HoldColumn[] = [];
+  const hidden: HoldColumn[] = [];
+  for (const part of text.split(/[,，]/)) {
+    const t = part.trim();
+    if (!t) continue;
+    const hide = /^[-−]/.test(t);
+    const id = LABEL_TO_ID.get(t.replace(/^[-−]\s*/, '').replace(/\s/g, '').toLowerCase()) ?? LABEL_TO_ID.get(t.replace(/^[-−]\s*/, '').replace(/\s/g, ''));
+    if (!id) continue;
+    order.push(id);
+    if (hide) hidden.push(id);
+  }
+  return order.length ? normalizePrefs({ order, hidden }) : null;
+}
+
+export const samePrefs = (a: ColumnPrefs, b: ColumnPrefs): boolean => prefsToText(a) === prefsToText(b);

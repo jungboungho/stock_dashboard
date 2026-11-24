@@ -45,6 +45,45 @@ describe("③ 엑셀 업데이트: '설정' 시트에 NH 계좌 줄", async () =
   });
 });
 
+describe("보유 종목 컬럼 설정을 '설정' 시트에", async () => {
+  const { settingsWithNhAccounts } = await import('../src/data/excel/export');
+  const { settingValue } = await import('../src/data/excel/parse');
+  const { COLUMNS_SETTING, defaultPrefs, moveColumn, prefsFromText, prefsToText, toggleColumn } = await import('../src/ui/columns');
+  const toCells = (rows: unknown[][]) => {
+    const cells: Record<string, string> = {};
+    rows.forEach((r, i) => r.forEach((v, c) => v !== null && v !== undefined && (cells[`${'ABC'[c]}${i + 1}`] = String(v))));
+    return cells;
+  };
+
+  it('글로 바꿨다가 되읽으면 같은 설정 (숨김은 앞에 -)', () => {
+    const p = toggleColumn(moveColumn(defaultPrefs(), 'weight', 0), 'avg', false);
+    const text = prefsToText(p);
+    expect(text.startsWith('비중, 계좌, 그룹, 수량, -평균단가, 현재가')).toBe(true);
+    expect(prefsFromText(text)).toEqual(p);
+    // 손으로 고친 값: 띄어쓰기 · 모르는 이름 · 빠진 컬럼도 받아 준다
+    const hand = prefsFromText('종가등락률, -계좌, 없는컬럼, 현재가')!;
+    const at = (id: string) => hand.order.indexOf(id as never);
+    expect(at('closeChange')).toBeLessThan(at('account'));
+    expect(at('account')).toBeLessThan(at('price'));
+    expect(hand.hidden).toEqual(['account']);
+    expect(hand.order).toHaveLength(12);
+    expect(prefsFromText('아무거나')).toBeNull();
+  });
+
+  it('없으면 줄을 덧붙이고, 있으면 B열만 바꾸고, 같으면 시트를 다시 쓰지 않는다', () => {
+    const value = prefsToText(toggleColumn(defaultPrefs(), 'group', false));
+    const wb = { 설정: { A1: '항목', B1: '값', A2: '중계 서버 주소', B2: 'https://x.dev' } };
+    const first = settingsWithNhAccounts(wb, [], [{ label: COLUMNS_SETTING, value, note: '설명' }])!;
+    expect(first.rows.at(-1)).toEqual([COLUMNS_SETTING, value, '설명']);
+    const wb2 = { 설정: toCells(first.rows) };
+    expect(settingValue(wb2, COLUMNS_SETTING)).toBe(value);
+    expect(settingsWithNhAccounts(wb2, [], [{ label: COLUMNS_SETTING, value, note: '설명' }])).toBeNull();
+    const changed = settingsWithNhAccounts(wb2, [], [{ label: COLUMNS_SETTING, value: prefsToText(defaultPrefs()), note: '설명' }])!;
+    expect(changed.rows).toHaveLength(first.rows.length);
+    expect(changed.rows.at(-1)?.[1]).toBe(prefsToText(defaultPrefs()));
+  });
+});
+
 describe('처음 쓰는 사람용 엑셀 양식 (public/template.xlsx)', async () => {
   const { readFileSync } = await import('node:fs');
   const { JSDOM } = await import('jsdom');

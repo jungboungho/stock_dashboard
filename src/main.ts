@@ -3,7 +3,7 @@ import { DummyProvider } from './data/dummy';
 import { loadPortfolio } from './data/provider';
 import { makeDummyModel } from './data/dummyModel';
 import { bookUsdKrw, makeExcelModel } from './data/excelModel';
-import { parseStockBook, parseSyncSettings, summaryEndCells, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
+import { parseStockBook, parseSyncSettings, settingValue, summaryEndCells, upgradeBook, type ExcelBook, type ExcelGroup } from './data/excel/parse';
 import { readWorkbook } from './data/excel/xlsx';
 import { upsertSheets } from './data/excel/write';
 import { buildExportSheets, groupsForExport, monthlyFromSheets, settingsWithNhAccounts, summaryLinkCells, upsertDaily } from './data/excel/export';
@@ -74,7 +74,22 @@ import {
   type WatchItem,
 } from './data/watchlist';
 import { DUMMY_WATCHLIST } from './data/dummyWatchlist';
-import { HOLD_COLUMNS, defaultPrefs, loadPrefs, moveColumn, savePrefs, toggleColumn, visibleColumns, type ColumnPrefs, type HoldColumn } from './ui/columns';
+import {
+  COLUMNS_SETTING,
+  COLUMNS_SETTING_NOTE,
+  HOLD_COLUMNS,
+  defaultPrefs,
+  loadPrefs,
+  moveColumn,
+  prefsFromText,
+  prefsToText,
+  samePrefs,
+  savePrefs,
+  toggleColumn,
+  visibleColumns,
+  type ColumnPrefs,
+  type HoldColumn,
+} from './ui/columns';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, searchInstruments, type Instrument } from './data/instruments';
 import { applyLedger, resolveCode } from './data/dividends';
@@ -205,6 +220,14 @@ function importExcel(bytes: Uint8Array, fileName: string, handle: FileHandle | n
     } catch (e) {
       syncNote = ` '설정' 시트의 중계 서버 주소를 쓸 수 없습니다 (${e instanceof Error ? e.message : String(e)}).`;
     }
+  }
+  // '설정' 시트의 보유종목 컬럼 → 이 브라우저의 컬럼 설정
+  const colsText = settingValue(wb, COLUMNS_SETTING);
+  const cols = colsText ? prefsFromText(colsText) : null;
+  if (cols && !samePrefs(cols, holdCols)) {
+    holdCols = cols;
+    savePrefs(cols);
+    syncNote += ' 보유 종목 컬럼 설정도 엑셀에서 가져왔습니다.';
   }
   excelBook = book;
   excelBytes = bytes;
@@ -1458,7 +1481,8 @@ async function exportExcel() {
     const fromMonth = book.dailyLog[0]?.date.slice(0, 7);
     const links = target && fromMonth ? summaryLinkCells(book, target, monthly, fromMonth) : [];
     // '설정' 시트: 동기화로 확인한 NH 계좌 중 아직 없는 줄만 덧붙임 (새 계좌는 B열 비움)
-    const settingsSheet = settingsWithNhAccounts(wb, book.nhAccounts ?? []);
+    // 보유 종목 컬럼 설정도 '설정' 시트에 (다른 기기에서 ① 엑셀 불러오기로 맞춤)
+    const settingsSheet = settingsWithNhAccounts(wb, book.nhAccounts ?? [], [{ label: COLUMNS_SETTING, value: prefsToText(holdCols), note: COLUMNS_SETTING_NOTE }]);
     if (settingsSheet) sheets.push(settingsSheet);
     const out = upsertSheets(bytes, sheets, target && links.length ? { sheet: target.sheet, updates: links } : undefined);
     parseStockBook(readWorkbook(out), book.fileName); // 다시 읽히는지 확인
@@ -1492,7 +1516,7 @@ async function exportExcel() {
     book.monthlyValues = monthly;
     saveExcelLocal();
     showNote(
-      `${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 일별 자산추이 ${book.dailyLog.length}일 · 월별 자산추이 ${Object.keys(monthly).length}개월${links.length ? ` · Summary 기말자산 ${fromMonth}부터 연결` : ''}${settingsSheet ? ` · 설정 시트에 NH 계좌 줄 추가 (B열이 빈 줄은 계좌 이름을 적어 주세요)` : ''}.`,
+      `${where} · 보유종목 ${h.rows.length}개 · 그룹 ${groups.length}개 · 일별 자산추이 ${book.dailyLog.length}일 · 월별 자산추이 ${Object.keys(monthly).length}개월${links.length ? ` · Summary 기말자산 ${fromMonth}부터 연결` : ''}${settingsSheet?.addedAccounts ? ` · 설정 시트에 NH 계좌 줄 추가 (B열이 빈 줄은 계좌 이름을 적어 주세요)` : ''}${settingsSheet?.changedValues.includes(COLUMNS_SETTING) ? ' · 보유 종목 컬럼 설정 저장' : ''}.`,
     );
   } catch (ex) {
     if ((ex as DOMException)?.name === 'AbortError') return;
