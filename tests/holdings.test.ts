@@ -193,7 +193,9 @@ describe('NH 중계 서버 응답 변환', () => {
         '/krstock/inquiry/v1/balance': { rsp_msg: '조회가 완료되었습니다.', Output_0: { dca: 1000 } },
         '/gbstock/inquiry/v1/balance': { rsp_msg: '조회가 완료되었습니다.', Output_0: { fc_dca: 3 }, Output_1: [{ iem_cd: 'TLT', iem_nm: 'TLT', cns_bse_bnc_qty: 1, fc_abk_amt: 80, fc_sec_end_pr: 81, krw_abk_amt1: 110000, tdt_sby_bse_xcg_rt: 1337 }] },
         '/krgold/inquiry/v1/goldDepositAndBalance': { rsp_msg: '조회가 완료되었습니다.', Output_0: { dca: 1000 } },
-        '/krstock/quote/v1/currentPrice': { rsp_msg: '조회가 완료되었습니다.', Output_0: { iem_cd: body.iem_cd, stck_prpr: 23680 } },
+        // 국내 현재가 · 등락률: 최근 2일 종가 (현재가 시세의 등락률은 부호가 없어서 쓰지 않음)
+        '/krstock/quote/v1/currentDaily': { rsp_msg: '조회가 완료되었습니다.', Output_0: [{ bsop_date: '26/11/24', stck_clpr: 23680 }, { bsop_date: '26/11/23', stck_clpr: 24000 }] },
+        '/gbstock/quote/v1/current': { rsp_msg: '조회완료', Output_0: { iem_cd: body.iem_cd, trdprc: 81, pctchng: -0.16 } },
       };
       return new Response(JSON.stringify(reply[path] ?? {}), { status: 200 });
     }) as typeof fetch;
@@ -204,7 +206,9 @@ describe('NH 중계 서버 응답 변환', () => {
     expect(res.accounts).toHaveLength(1);
     expect(res.accounts[0].rows[0]).toMatchObject({ code: 'TLT', quantity: 1, price: 81 });
     expect(res.accounts[0].cash).toEqual([{ account: '종합', currency: 'KRW', amount: 1000 }, { account: '종합', currency: 'USD', amount: 3 }]);
-    expect(res.prices).toEqual({ '360750': 23680 });
+    expect(res.prices).toEqual({ '360750': 23680 }); // NH 계좌 종목(TLT)은 잔고 값을 쓰므로 현재가는 안 돌려줌
+    expect(res.changes['360750']).toBeCloseTo(23680 / 24000 - 1, 10); // 내린 날도 음수로
+    expect(res.changes.TLT).toBeCloseTo(-0.0016, 10);
     expect(res.usdKrw).toBe(1337);
     expect(res.warnings[0]).toContain('금계좌');
   });
@@ -251,5 +255,23 @@ describe('계좌별 자산 추이', () => {
     ]);
     expect(s[1].twr).toBeCloseTo(210 / (180 + 10) - 1, 10);
     expect(excelAccountSnapshots(book, ['IRP'], '2026-11-30')).toEqual([]); // 기록 없는 계좌
+  });
+});
+
+describe('등락률', () => {
+  it('동기화하면 모든 종목(API 계좌 · 직접 계좌)에 전일 대비 등락률이 붙는다', () => {
+    let h = upsertHolding(emptyHoldings(), row({}));
+    h = upsertHolding(h, row({ account: '연금1', code: '458730', name: 'TIGER 미국배당다우존스', quantity: 3 }));
+    const next = applySync(h, {
+      asOf: '2026-11-24T05:00:00Z',
+      usdKrw: 1350,
+      accounts: [{ name: '종합', rows: [row({ account: '종합', code: 'TLT', name: 'TLT', currency: 'USD', quantity: 1, avgPrice: 80, price: 81 })], cash: [] }],
+      prices: { '360750': 24140 },
+      changes: { '360750': 0.0235, TLT: -0.0016 },
+      warnings: [],
+    });
+    const by = Object.fromEntries(next.rows.map((r) => [`${r.account}:${r.code}`, r.change ?? null]));
+    expect(by).toEqual({ 'ISA:360750': 0.0235, '연금1:458730': null, '종합:TLT': -0.0016 });
+    expect(toPositions(next, 1350).find((p) => p.key === 'TLT')?.change).toBe(-0.0016);
   });
 });

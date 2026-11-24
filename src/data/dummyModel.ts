@@ -24,6 +24,11 @@ export function makePortfolioModel(
     return holdCache.get(k)!;
   };
   const hasCode = (codes: string[]) => (p: Position) => codes.includes(p.key);
+  /** 샘플: 마지막 두 종가로 전일 대비 등락률 */
+  const changeOf = (code: string) => {
+    const c = data.prices.find((p) => p.code === code)?.closes;
+    return c && c.length > 1 && c.at(-2)! > 0 ? c.at(-1)! / c.at(-2)! - 1 : null;
+  };
 
   return {
     source: opts.source,
@@ -58,6 +63,7 @@ export function makePortfolioModel(
           quantity: h.quantity,
           avgPrice: h.avgCostKRW / fx,
           price: h.price,
+          change: changeOf(h.instrument.code),
           costKRW: h.costKRW,
           valueKRW: h.valueKRW,
           attrs: { assetClass: h.instrument.assetClass, region: h.instrument.region, sector: h.instrument.sector },

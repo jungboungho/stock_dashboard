@@ -20,6 +20,8 @@ export interface HoldingRow {
   price: number | null;
   /** 매입금액 (원). 있으면 평균단가 × 환율 대신 이 값을 원가로 쓴다 */
   costKRW?: number | null;
+  /** 전일 대비 등락률 (0.0123 = +1.23%), 동기화 때 받음 */
+  change?: number | null;
 }
 
 export interface CashRow {
@@ -65,6 +67,7 @@ export function toPositions(h: HoldingsState, usdKrw: number): Position[] {
     quantity: r.quantity,
     avgPrice: r.avgPrice,
     price: r.price,
+    change: r.change ?? null,
     costKRW: rowCostKRW(r, usdKrw),
     valueKRW: rowValueKRW(r, usdKrw),
     attrs: { currency: r.currency === 'USD' ? '달러 자산' : '원화 자산', account: r.account },
@@ -142,6 +145,8 @@ export interface SyncResult {
   accounts: SyncAccount[];
   /** 종목코드 → 현재가 (종목 통화) */
   prices: Record<string, number>;
+  /** 종목코드 → 전일 대비 등락률 */
+  changes?: Record<string, number>;
   /** dividendsFrom 부터 NH 계좌의 배당 입금 (금액은 그 통화) */
   dividends?: { date: string; account: string; code: string; name: string; currency: Currency; amount: number; fx?: number; krw?: number }[];
   dividendsFrom?: string | null;
@@ -163,10 +168,12 @@ export function applySync(h: HoldingsState, res: SyncResult): HoldingsState {
   const rows = h.rows
     .filter((r) => !names.has(r.account))
     .map((r) => (r.code && res.prices[r.code] > 0 ? { ...r, price: res.prices[r.code] } : r));
+  const changes = res.changes ?? {};
+  const withChange = (r: HoldingRow): HoldingRow => (r.code && changes[r.code] !== undefined ? { ...r, change: changes[r.code] } : r);
   const cash = h.cash.filter((c) => !names.has(c.account));
   for (const a of res.accounts) {
     rows.push(...a.rows);
     cash.push(...a.cash);
   }
-  return { asOf: res.asOf, rows, cash, usdKrw: res.usdKrw ?? h.usdKrw, syncedAt: res.asOf, syncedAccounts: [...names] };
+  return { asOf: res.asOf, rows: rows.map(withChange), cash, usdKrw: res.usdKrw ?? h.usdKrw, syncedAt: res.asOf, syncedAccounts: [...names] };
 }

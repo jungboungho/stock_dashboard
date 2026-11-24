@@ -54,6 +54,7 @@ import {
 } from './ui/charts';
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
+import { HOLD_COLUMNS, defaultPrefs, loadPrefs, moveColumn, savePrefs, toggleColumn, visibleColumns, type ColumnPrefs, type HoldColumn } from './ui/columns';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
 import { fillFromInstruments, listInfo, loadInstrumentList, loadInstruments, refreshInstruments, type Instrument } from './data/instruments';
 import { applyLedger, resolveCode } from './data/dividends';
@@ -403,6 +404,7 @@ function syncSidePeriod() {
 
 function buildControls() {
   buildNav();
+  buildColumnControls();
   segButtons($('preset-seg'), PRESETS, (id) => applyPreset(id as Preset));
 
   $('return-mode').addEventListener('click', (e) => {
@@ -1703,32 +1705,150 @@ function renderHoldings() {
     : '보유 종목 정보는 동기화 후 표시됩니다. 그룹별 비중의 "+ 종목 직접 추가"로 입력한 종목은 여기에도 나옵니다.';
   const asOf = excel && excelBook!.holdings.asOf ? ` · ${timeLabel(excelBook!.holdings.asOf)} 기준` : '';
   $('hold-count').textContent = ps.length || cash ? `${aggregateByKey(ps).length}개 종목${cash ? ` · 현금 ${won(cash)}` : ''} · 합계 ${wonShort(total)}${asOf}` : '';
-  $('hold-table').innerHTML = `<thead><tr><th>종목</th>${multi ? '<th class="left">계좌</th>' : ''}<th class="left">그룹</th><th>수량</th><th>평균단가</th><th>현재가</th><th>평가금</th><th>평가손익</th><th>수익률</th><th>비중</th><th></th></tr></thead>
+  // 컬럼: 설정에서 고른 순서 · 표시 (계좌 열은 전체 계좌를 볼 때만)
+  const cols = visibleColumns(holdCols).filter((c) => c !== 'account' || multi);
+  const meta = new Map(HOLD_COLUMNS.map((c) => [c.id, c]));
+  const cell = (c: HoldColumn, p: Position): string => {
+    const profit = p.valueKRW - p.costKRW;
+    const rate = p.costKRW > 0 ? profit / p.costKRW : 0;
+    const acc = p.accountId ?? '';
+    const api = excel && isApiAccount(acc);
+    switch (c) {
+      case 'account':
+        return `<span class="chip"${api ? ' title="NH 동기화로 채운 계좌"' : ''}>${escapeHtml(excel ? acc : acc ? accountName(acc) : '-')}${api ? ' · API' : ''}</span>`;
+      case 'group':
+        return `<span class="name"><span class="swatch sm" style="background:${customColor(store.members[p.key] ?? UNGROUPED_ID)}"></span>${escapeHtml(groupNameOf(p.key))}</span>`;
+      case 'quantity':
+        return number(p.quantity);
+      case 'avg':
+        return p.avgPrice ? unitPrice(p.avgPrice, p.currency) : '-';
+      case 'price':
+        return priceCell(p);
+      case 'change':
+        return p.change == null ? '<span class="muted" title="동기화 후 표시">-</span>' : signed(p.change, pctSigned(p.change));
+      case 'value':
+        return won(p.valueKRW);
+      case 'pnl':
+        return p.price === null ? '-' : signed(profit, wonSigned(profit));
+      case 'rate':
+        return p.price === null ? '-' : signed(rate, pctSigned(rate));
+      case 'weight':
+        return `${pct(p.valueKRW / total, 1)}<span class="bar-cell"><span style="width:${(p.valueKRW / max) * 100}%"></span></span>`;
+    }
+  };
+  const th = (c: HoldColumn) => `<th draggable="true" data-col="${c}" class="${meta.get(c)!.left ? 'left ' : ''}draggable" title="끌어서 순서 바꾸기">${meta.get(c)!.label}</th>`;
+  $('hold-table').innerHTML = `<thead><tr><th>종목</th>${cols.map(th).join('')}<th></th></tr></thead>
     <tbody>${ps
       .map((p) => {
-        const profit = p.valueKRW - p.costKRW;
-        const rate = p.costKRW > 0 ? profit / p.costKRW : 0;
         const acc = p.accountId ?? '';
-        const api = excel && isApiAccount(acc);
         const actions = excel
           ? `<button type="button" class="mini" data-act="edit-holding" data-account="${escapeHtml(acc)}" data-key="${escapeHtml(p.key)}" aria-label="${escapeHtml(p.name)} 수정">✎</button>
              <button type="button" class="mini danger" data-act="delete-holding" data-account="${escapeHtml(acc)}" data-key="${escapeHtml(p.key)}" aria-label="${escapeHtml(p.name)} 삭제">✕</button>`
           : `<button type="button" class="mini" data-act="edit-stock" data-key="${escapeHtml(p.key)}" aria-label="${escapeHtml(p.name)} 수정">✎</button>`;
         return `<tr>
           <td>${escapeHtml(p.name)}${p.code && p.code !== p.name ? `<span class="code">${escapeHtml(p.code)}</span>` : ''}${p.manual ? ' <span class="chip">직접</span>' : ''}</td>
-          ${multi ? `<td class="left"><span class="chip"${api ? ' title="NH 동기화로 채운 계좌"' : ''}>${escapeHtml(excel ? acc : acc ? accountName(acc) : '-')}${api ? ' · API' : ''}</span></td>` : ''}
-          <td class="left"><span class="name"><span class="swatch sm" style="background:${customColor(store.members[p.key] ?? UNGROUPED_ID)}"></span>${escapeHtml(groupNameOf(p.key))}</span></td>
-          <td>${number(p.quantity)}</td>
-          <td>${p.avgPrice ? unitPrice(p.avgPrice, p.currency) : '-'}</td>
-          <td>${priceCell(p)}</td>
-          <td>${won(p.valueKRW)}</td>
-          <td>${p.price === null ? '-' : signed(profit, wonSigned(profit))}</td>
-          <td>${p.price === null ? '-' : signed(rate, pctSigned(rate))}</td>
-          <td>${pct(p.valueKRW / total, 1)}<span class="bar-cell"><span style="width:${(p.valueKRW / max) * 100}%"></span></span></td>
+          ${cols.map((c) => `<td${meta.get(c)!.left ? ' class="left"' : ''}>${cell(c, p)}</td>`).join('')}
           <td class="actions">${actions}</td>
         </tr>`;
       })
       .join('')}</tbody>`;
+}
+
+// ─── 보유 종목 컬럼 설정 ──────────────────────────────────────
+
+let holdCols: ColumnPrefs = loadPrefs();
+
+function setHoldCols(next: ColumnPrefs) {
+  holdCols = next;
+  savePrefs(next);
+  renderHoldings();
+}
+
+function buildColumnControls() {
+  $('hold-cols-btn').addEventListener('click', () => openColumnDialog());
+  // 머리글을 끌어서 순서 바꾸기 (PC)
+  let dragging: HoldColumn | null = null;
+  const table = $('hold-table');
+  table.addEventListener('dragstart', (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('th[data-col]');
+    if (!t) return;
+    dragging = t.dataset.col as HoldColumn;
+    e.dataTransfer?.setData('text/plain', dragging);
+    t.classList.add('dragging');
+  });
+  table.addEventListener('dragover', (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('th[data-col]');
+    if (!dragging || !t) return;
+    e.preventDefault();
+    table.querySelectorAll('th.drop-target').forEach((x) => x.classList.remove('drop-target'));
+    t.classList.add('drop-target');
+  });
+  table.addEventListener('dragend', () => {
+    dragging = null;
+    table.querySelectorAll('th.dragging, th.drop-target').forEach((x) => x.classList.remove('dragging', 'drop-target'));
+  });
+  table.addEventListener('drop', (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('th[data-col]');
+    if (!dragging || !t) return;
+    e.preventDefault();
+    const target = t.dataset.col as HoldColumn;
+    if (target !== dragging) setHoldCols(moveColumn(holdCols, dragging, holdCols.order.indexOf(target)));
+    dragging = null;
+  });
+}
+
+/** 컬럼 표시 · 순서 창 (변경은 바로 적용) */
+function openColumnDialog() {
+  let dlg = document.getElementById('cols-dialog') as HTMLDialogElement | null;
+  if (!dlg) {
+    dlg = document.createElement('dialog');
+    dlg.id = 'cols-dialog';
+    dlg.className = 'dialog';
+    document.body.appendChild(dlg);
+  }
+  const d = dlg;
+  const draw = () => {
+    const meta = new Map(HOLD_COLUMNS.map((c) => [c.id, c]));
+    d.innerHTML = `<div class="dialog-form">
+        <h3>보유 종목 컬럼</h3>
+        <p class="hint">보일 컬럼을 고르고 ▲▼로 순서를 바꿉니다. 표 머리글을 끌어서 옮길 수도 있습니다. '종목' 열은 항상 맨 앞입니다.</p>
+        <ol class="col-list">${holdCols.order
+          .map((c, i) => {
+            const m = meta.get(c)!;
+            const on = !holdCols.hidden.includes(c);
+            return `<li>
+              <label><input type="checkbox" data-col="${c}" ${on ? 'checked' : ''} /> ${m.label}${m.note ? ` <small>${m.note}</small>` : ''}</label>
+              <span class="col-move">
+                <button type="button" class="mini" data-up="${c}" ${i === 0 ? 'disabled' : ''} aria-label="${m.label} 위로">▲</button>
+                <button type="button" class="mini" data-down="${c}" ${i === holdCols.order.length - 1 ? 'disabled' : ''} aria-label="${m.label} 아래로">▼</button>
+              </span>
+            </li>`;
+          })
+          .join('')}</ol>
+        <div class="dialog-actions">
+          <button type="button" class="btn" data-reset>기본값으로</button>
+          <button type="button" class="btn primary" data-close>닫기</button>
+        </div>
+      </div>`;
+  };
+  draw();
+  d.onchange = (e) => {
+    const box = e.target as HTMLInputElement;
+    if (box.dataset.col) setHoldCols(toggleColumn(holdCols, box.dataset.col as HoldColumn, box.checked));
+  };
+  d.onclick = (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+    if (!b) return;
+    if (b.dataset.close !== undefined) return d.close();
+    if (b.dataset.reset !== undefined) setHoldCols(defaultPrefs());
+    const up = b.dataset.up as HoldColumn | undefined;
+    const down = b.dataset.down as HoldColumn | undefined;
+    if (up) setHoldCols(moveColumn(holdCols, up, holdCols.order.indexOf(up) - 1));
+    if (down) setHoldCols(moveColumn(holdCols, down, holdCols.order.indexOf(down) + 1));
+    draw();
+    (d.querySelector(`button[data-${up ? 'up' : 'down'}="${up ?? down}"]`) as HTMLElement | null)?.focus();
+  };
+  d.showModal();
 }
 
 main().catch((e) => {

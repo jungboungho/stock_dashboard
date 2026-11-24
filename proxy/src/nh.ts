@@ -61,6 +61,8 @@ export interface SyncResult {
   usdKrw: number | null;
   accounts: SyncAccount[];
   prices: Record<string, number>;
+  /** 종목코드 → 전일 대비 등락률 (0.0123 = +1.23%). NH 계좌 종목 + 물어본 종목 */
+  changes: Record<string, number>;
   /** 중계 서버 배당 장부 전체 (NH 계좌) */
   dividends: DividendRow[];
   /** 이번에 다시 받은 시작일 (장부 최신일 − 14일, 처음이면 2년 전) */
@@ -269,6 +271,24 @@ export function mergeLedger(old: DividendRow[], fresh: Omit<DividendRow, 'fx' | 
   return [...keep, ...added].sort((a, b) => a.date.localeCompare(b.date) || a.account.localeCompare(b.account) || a.name.localeCompare(b.name));
 }
 
+/**
+ * 국내: 일자별 시세 최근 2일 종가로 현재가 · 등락률 (현재가 시세의 prdy_ctrt 는 부호가 없어 내린 날도 +로 옴)
+ * 장중에는 첫 줄이 오늘 현재가
+ */
+export async function quoteKr(nh: NhClient, code: string): Promise<{ price: number | null; change: number | null; msg: string }> {
+  const r = await nh.call('/krstock/quote/v1/currentDaily', { iem_cd: code, market_cd: 'UNT', array_cnt: '2', view_main_yn: 'Y' });
+  const [today, prev] = rows(r, 'Output_0').map((x) => n(x.stck_clpr));
+  return { price: today || null, change: today && prev ? today / prev - 1 : null, msg: s(r.rsp_msg) };
+}
+
+/** 미국: 현재가상세 (pctchng 는 부호 있는 %) */
+export async function quoteUs(nh: NhClient, code: string): Promise<{ price: number | null; change: number | null; msg: string }> {
+  const r = await nh.call('/gbstock/quote/v1/current', { iem_cd: code });
+  const o = rows(r, 'Output_0')[0];
+  const pct = o?.pctchng;
+  return { price: n(o?.trdprc) || null, change: pct === undefined || pct === null || pct === '' ? null : n(pct) / 100, msg: s(r.rsp_msg) };
+}
+
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
 
 export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[], ledger: LedgerStore | null = null): Promise<SyncResult> {
@@ -340,22 +360,23 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     }
   }
 
+  // 현재가 · 등락률: 물어본 종목 + NH 계좌 종목 (NH 계좌 종목의 현재가는 잔고 값을 그대로 쓰고 등락률만)
   const prices: Record<string, number> = {};
-  for (const q of quotes) {
+  const changes: Record<string, number> = {};
+  const asked = new Set(quotes.map((q) => q.code));
+  const targets = new Map<string, Currency>(quotes.map((q) => [q.code, q.currency]));
+  for (const a of accounts) for (const r of a.rows) if (r.code && !targets.has(r.code)) targets.set(r.code, r.currency);
+  for (const [code, currency] of targets) {
     try {
-      if (q.currency === 'KRW' && /^[0-9A-Z]{6}$/.test(q.code)) {
-        const r = await nh.call('/krstock/quote/v1/currentPrice', { iem_cd: q.code, market_cd: 'UNT' });
-        const p = n(rows(r, 'Output_0')[0]?.stck_prpr);
-        if (p) prices[q.code] = p;
-        else warnings.push(`${q.code}: 현재가 없음 (${s(r.rsp_msg)})`);
-      } else if (q.currency === 'USD') {
-        const r = await nh.call('/gbstock/quote/v1/current', { iem_cd: q.code });
-        const p = n(rows(r, 'Output_0')[0]?.trdprc);
-        if (p) prices[q.code] = p;
-        else warnings.push(`${q.code}: 현재가 없음 (${s(r.rsp_msg)})`);
+      const q = currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
+      if (!q) continue;
+      if (q.change !== null) changes[code] = q.change;
+      if (asked.has(code)) {
+        if (q.price) prices[code] = q.price;
+        else warnings.push(`${code}: 현재가 없음 (${q.msg})`);
       }
     } catch (e) {
-      warnings.push(`${q.code}: ${e instanceof Error ? e.message : String(e)}`);
+      if (asked.has(code)) warnings.push(`${code}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -378,5 +399,5 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
     await ledger.put(JSON.stringify({ updatedAt: new Date().toISOString(), rows: book } satisfies DividendLedger));
   }
 
-  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, dividends: book, dividendsFrom, unmapped, warnings };
+  return { asOf: new Date().toISOString(), usdKrw, accounts, prices, changes, dividends: book, dividendsFrom, unmapped, warnings };
 }

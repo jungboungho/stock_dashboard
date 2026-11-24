@@ -16,6 +16,8 @@ export interface Position {
   avgPrice: number;
   /** 현재가 (종목 통화). 모르면 null → 평가금 = 매입원가 */
   price: number | null;
+  /** 전일 대비 등락률 (0.0123 = +1.23%), 모르면 null */
+  change?: number | null;
   costKRW: number;
   valueKRW: number;
   /** 그룹 기준별 값 (assetClass · region · sector · currency ...) */

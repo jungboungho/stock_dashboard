@@ -365,6 +365,7 @@ export function parseHoldings(book: Workbook): HoldingsState {
       quantity: qty,
       avgPrice: num(r['평균단가']) ?? 0,
       price: num(r['현재가']) ?? null,
+      change: num(r['등락률']) ?? null,
       costKRW: num(r['매입금액(원)']) ?? null,
     });
   }
