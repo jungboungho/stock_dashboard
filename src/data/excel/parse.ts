@@ -3,7 +3,7 @@ import type { YearStart } from '../model';
 import type { Currency, ISODate } from '../../types';
 import { emptyHoldings, holdingKey, type HoldingsState } from '../holdings';
 import type { DividendEntry } from '../dividends';
-import { emptyWatchlist, WATCH_UNGROUPED, type Watchlist } from '../watchlist';
+import { addMarketItems, emptyWatchlist, WATCH_UNGROUPED, type Watchlist } from '../watchlist';
 
 /**
  * 사용자가 관리하던 '주식.xlsx' 구조를 읽어 앱 데이터로 바꾼다.
@@ -480,6 +480,8 @@ export function parseDividends(book: Workbook, usdKrw: number): DividendEntry[] 
 /** '관심종목' 시트: 그룹 · 종목코드 · 종목명 · 통화 (+ 마지막 시세). 종목코드가 빈 줄은 빈 그룹 */
 export function parseWatchlist(book: Workbook): Watchlist {
   const w = emptyWatchlist();
+  // 시트가 없으면(처음) 시장 지표 '발견' 그룹으로 시작. 시트가 있으면 사용자가 지운 것도 그대로 둔다
+  if (!findSheet(book, WATCH_SHEET)) return addMarketItems(w);
   for (const r of table(findSheet(book, WATCH_SHEET), ['그룹', '종목코드'])) {
     const g = str(r['그룹']);
     const group = g === WATCH_UNGROUPED ? '' : g;

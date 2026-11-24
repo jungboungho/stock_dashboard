@@ -55,6 +55,9 @@ import {
 import { openConfirm, openForm, parseNumber } from './ui/dialog';
 import { openPhotoReview, recognizeImages } from './ui/photo';
 import {
+  addMarketItems,
+  marketKind,
+  missingMarketItems,
   addWatchGroup,
   addWatchItem,
   applyWatchQuotes,
@@ -66,6 +69,7 @@ import {
   watchItemsIn,
   watchQuoteTargets,
   type Watchlist,
+  type WatchItem,
 } from './data/watchlist';
 import { HOLD_COLUMNS, defaultPrefs, loadPrefs, moveColumn, savePrefs, toggleColumn, visibleColumns, type ColumnPrefs, type HoldColumn } from './ui/columns';
 import { applyPhoto, guessAccountByTotal, matchHoldings, parseAccountScreen } from './data/photo';
@@ -1940,6 +1944,7 @@ function renderWatchlist() {
     renderWatchlist();
   };
   $('watch-group-edit').hidden = !w.groups.length;
+  $('watch-market-add').hidden = missingMarketItems(w) === 0;
 
   const items = watchItemsIn(w, watchGroups);
   $('watch-empty').hidden = items.length > 0;
@@ -1949,18 +1954,30 @@ function renderWatchlist() {
     : '"+ 그룹"으로 그룹을 만들고 "+ 종목 추가"로 종목을 넣으세요. 시세는 ② 최신 정보 가져오기 때 받습니다.';
   $('watch-count').textContent = w.quotedAt ? `${items.length}개 · ${timeLabel(w.quotedAt)} 시세` : `${items.length}개`;
   const dash = '<span class="muted" title="동기화 후 표시">-</span>';
-  const price = (v: number | null | undefined, c: 'KRW' | 'USD') => (v == null ? dash : unitPrice(v, c));
+  // 지수는 포인트, 환율은 소수 둘째 자리까지 원, 금은 원/g
+  const price = (v: number | null | undefined, i: WatchItem) => {
+    if (v == null) return dash;
+    const kind = marketKind(i.code);
+    if (kind === 'index') return number(v);
+    if (kind === 'fx') return `${number(v)}원`;
+    return unitPrice(v, i.currency);
+  };
+  const tag = (i: WatchItem) => {
+    const kind = marketKind(i.code);
+    if (kind) return ` <span class="chip">${kind === 'index' ? '지수' : kind === 'fx' ? '환율' : '금'}</span>`;
+    return i.currency === 'USD' ? ' <span class="chip">미국</span>' : '';
+  };
   const rate = (v: number | null | undefined) => (v == null ? dash : signed(v, pctSigned(v)));
   $('watch-table').innerHTML = `<thead><tr><th>종목</th><th class="left">그룹</th><th>현재가</th><th>등락률</th><th>종가</th><th>종가 등락률</th><th></th></tr></thead>
     <tbody>${items
       .map((i) => {
         const g = i.group || WATCH_UNGROUPED;
         return `<tr>
-          <td>${escapeHtml(i.name)}${i.name === i.code ? '' : `<span class="code">${escapeHtml(i.code)}</span>`}${i.currency === 'USD' ? ' <span class="chip">미국</span>' : ''}</td>
+          <td>${escapeHtml(i.name)}${i.name === i.code || marketKind(i.code) ? '' : `<span class="code">${escapeHtml(i.code)}</span>`}${tag(i)}</td>
           <td class="left"><span class="chip">${escapeHtml(g)}</span></td>
-          <td>${price(i.price, i.currency)}</td>
+          <td>${price(i.price, i)}</td>
           <td>${rate(i.change)}</td>
-          <td>${price(i.close, i.currency)}</td>
+          <td>${price(i.close, i)}</td>
           <td>${rate(i.closeChange)}</td>
           <td class="actions">
             <button type="button" class="mini" data-act="watch-move" data-code="${escapeHtml(i.code)}" data-group="${escapeHtml(i.group)}" aria-label="${escapeHtml(i.name)} 그룹 바꾸기">✎</button>
@@ -2011,6 +2028,11 @@ function buildWatchControls() {
     });
   });
   $('watch-add').addEventListener('click', () => void dialogWatchAdd());
+  $('watch-market-add').addEventListener('click', () => {
+    if (!excelBook) return;
+    watchChanged(addMarketItems(excelBook.watchlist));
+    showNote('관심 종목에 "발견" 그룹(코스피 · 나스닥 · S&P500 · 다우존스 · 필라델피아 반도체 · 원/달러 · 원/엔 · 금)을 넣었습니다. 시세는 "최신 정보 가져오기" 때 받습니다. 코스닥 지수는 NH Open API 에서 조회되지 않습니다.');
+  });
   document.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act^="watch-"]');
     if (!b || !excelBook) return;

@@ -29,6 +29,41 @@ export interface Watchlist {
 
 export const emptyWatchlist = (): Watchlist => ({ groups: [], items: [], quotedAt: null });
 
+// ─── 시장 지표 ('발견' 그룹 기본값) ───
+// 코드는 종목 코드와 겹치지 않게 접두어를 붙인다 (중계 서버 MARKET_CODES 와 같은 값)
+// 코스닥 지수는 NH Open API 에서 조회되지 않아 뺐다
+export const DISCOVER_GROUP = '발견';
+export const MARKET_ITEMS: Omit<WatchItem, 'group'>[] = [
+  { code: 'IDX:KOSPI', name: '코스피', currency: 'KRW' },
+  { code: 'IDX:COMP', name: '나스닥', currency: 'USD' },
+  { code: 'IDX:SPX', name: 'S&P500', currency: 'USD' },
+  { code: 'IDX:DJI', name: '다우존스', currency: 'USD' },
+  { code: 'IDX:SOX', name: '필라델피아 반도체', currency: 'USD' },
+  { code: 'FX:USDKRW', name: '원/달러 환율', currency: 'KRW' },
+  { code: 'FX:JPYKRW', name: '원/엔 환율 (100엔)', currency: 'KRW' },
+  { code: 'GOLD:KRX', name: '금 (KRX 금현물, 1g)', currency: 'KRW' },
+];
+
+export type MarketKind = 'index' | 'fx' | 'gold';
+export function marketKind(code: string): MarketKind | null {
+  if (code.startsWith('IDX:')) return 'index';
+  if (code.startsWith('FX:')) return 'fx';
+  if (code.startsWith('GOLD:')) return 'gold';
+  return null;
+}
+
+/** '발견' 그룹에 빠진 시장 지표를 넣는다 (그룹이 없으면 맨 앞에 만든다) */
+export function addMarketItems(w: Watchlist): Watchlist {
+  const groups = w.groups.includes(DISCOVER_GROUP) ? w.groups : [DISCOVER_GROUP, ...w.groups];
+  const have = new Set(w.items.filter((i) => i.group === DISCOVER_GROUP).map((i) => i.code));
+  const missing = MARKET_ITEMS.filter((m) => !have.has(m.code)).map((m) => ({ ...m, group: DISCOVER_GROUP }));
+  // 발견 그룹 종목은 목록 맨 앞에
+  return { ...w, groups, items: [...w.items.filter((i) => i.group === DISCOVER_GROUP), ...missing, ...w.items.filter((i) => i.group !== DISCOVER_GROUP)] };
+}
+
+export const missingMarketItems = (w: Watchlist): number =>
+  MARKET_ITEMS.filter((m) => !w.items.some((i) => i.group === DISCOVER_GROUP && i.code === m.code)).length;
+
 function cleanGroup(name: string): string {
   const n = name.trim().replace(/\s+/g, ' ');
   if (!n) throw new Error('그룹 이름을 입력하세요');

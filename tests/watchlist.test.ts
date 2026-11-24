@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addMarketItems,
+  DISCOVER_GROUP,
+  MARKET_ITEMS,
+  marketKind,
+  missingMarketItems,
   addWatchGroup,
   addWatchItem,
   applyWatchQuotes,
@@ -12,7 +17,8 @@ import {
   watchItemsIn,
   watchQuoteTargets,
 } from '../src/data/watchlist';
-import { marketClock, pickClose } from '../proxy/src/nh';
+import { marketClock, NhClient, pickClose, quoteMarket, signedPct } from '../proxy/src/nh';
+import { parseWatchlist } from '../src/data/excel/parse';
 
 const sample = () => {
   let w = addWatchGroup(addWatchGroup(emptyWatchlist(), '반도체'), '빅테크');
@@ -97,5 +103,90 @@ describe('종가 고르기', () => {
     const clock = marketClock(new Date('2026-11-24T15:00:00Z'), 'America/New_York'); // 뉴욕 10:00
     expect(clock.minutes).toBe(600);
     expect(pickClose(days, clock, 570, 960).close).toBe(100);
+  });
+});
+
+describe('시장 지표 (발견 그룹)', () => {
+  it('발견 그룹을 맨 앞에 만들고, 빠진 지표만 채운다', () => {
+    let w = addWatchGroup(emptyWatchlist(), '반도체');
+    w = addWatchItem(w, { code: '005930', name: '삼성전자', currency: 'KRW' }, '반도체');
+    w = addMarketItems(w);
+    expect(w.groups).toEqual([DISCOVER_GROUP, '반도체']);
+    expect(w.items.slice(0, MARKET_ITEMS.length).map((i) => i.code)).toEqual(MARKET_ITEMS.map((m) => m.code));
+    expect(missingMarketItems(w)).toBe(0);
+    w = removeWatchItem(w, 'GOLD:KRX', DISCOVER_GROUP);
+    expect(missingMarketItems(w)).toBe(1);
+    expect(addMarketItems(w).items.filter((i) => i.group === DISCOVER_GROUP)).toHaveLength(MARKET_ITEMS.length);
+    expect(marketKind('IDX:SPX')).toBe('index');
+    expect(marketKind('SOXX')).toBeNull();
+  });
+
+  it("엑셀에 '관심종목' 시트가 없으면 발견 그룹으로 시작", () => {
+    const w = parseWatchlist({} as never);
+    expect(w.groups).toEqual([DISCOVER_GROUP]);
+    expect(w.items).toHaveLength(MARKET_ITEMS.length);
+  });
+});
+
+describe('중계 서버: 지수 · 환율 · 금 시세', () => {
+  const nhFake = (reply: (path: string, body: Record<string, string>) => unknown) =>
+    new NhClient({
+      appKey: 'k',
+      appSecret: 's',
+      accounts: '',
+      intervalMs: 0,
+      tokens: { get: async () => ({ access_token: 't', expires_at: Date.now() / 1000 + 3600 }), set: async () => {} },
+      fetch: (async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}')).Input_0 ?? {};
+        return new Response(JSON.stringify(reply(new URL(url).pathname, body)), { status: 200 });
+      }) as typeof fetch,
+    });
+  const after = new Date('2026-11-24T08:30:00Z'); // 서울 17:30 (화), 뉴욕 03:30
+
+  it('등락 부호로 부호 없는 등락률을 바로잡는다', () => {
+    expect(signedPct('0.15', '5')).toBeCloseTo(-0.0015, 10);
+    expect(signedPct(6.32, '2')).toBeCloseTo(0.0632, 10);
+    expect(signedPct('-0.04', '')).toBeCloseTo(-0.0004, 10);
+    expect(signedPct('', '2')).toBeNull();
+  });
+
+  it('미국 지수: 다우는 .DJI 로 묻고, 종가는 끝난 정규장', async () => {
+    const asked: string[] = [];
+    const nh = nhFake((_p, b) => {
+      asked.push(b.iem_cd);
+      return { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '49595.31', prdy_ctrt: '3.01', prdy_vrss_sign: '2' }, Output_1: [{ bsop_date: '20261123', ovrs_prpr: '49595.31' }, { bsop_date: '20261120', ovrs_prpr: '48147.33' }] };
+    });
+    const q = await quoteMarket(nh, 'IDX:DJI', after);
+    expect(asked).toEqual(['.DJI']);
+    expect(q).toMatchObject({ price: 49595.31, close: 49595.31, closeDate: '20261123' });
+    expect(q!.change).toBeCloseTo(0.0301, 10);
+    expect(q!.closeChange).toBeCloseTo(49595.31 / 48147.33 - 1, 10);
+  });
+
+  it('원/엔(100엔) = 원/달러 ÷ 엔/달러 × 100, 종가는 어제 값', async () => {
+    const nh = nhFake((_p, b) =>
+      b.iem_cd === 'KRW'
+        ? { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '1342.1', prdy_ctrt: '-0.04', prdy_vrss_sign: '5' }, Output_1: [{ bsop_date: '20261124', ovrs_prpr: '1342.1' }, { bsop_date: '20261123', ovrs_prpr: '1342.6' }, { bsop_date: '20261120', ovrs_prpr: '1350' }] }
+        : { rsp_msg: '조회완료', Output_0: { ovrs_prpr: '159.34', prdy_ctrt: '0.03', prdy_vrss_sign: '2' }, Output_1: [{ bsop_date: '20261124', ovrs_prpr: '159.34' }, { bsop_date: '20261123', ovrs_prpr: '159.29' }, { bsop_date: '20261120', ovrs_prpr: '160' }] },
+    );
+    const q = await quoteMarket(nh, 'FX:JPYKRW', after);
+    expect(q!.price).toBeCloseTo((1342.1 / 159.34) * 100, 8);
+    expect(q!.change).toBeCloseTo((1 - 0.0004) / (1 + 0.0003) - 1, 10);
+    expect(q!.closeDate).toBe('20261123');
+    expect(q!.close).toBeCloseTo((1342.6 / 159.29) * 100, 8);
+    expect(q!.closeChange).toBeCloseTo(1342.6 / 159.29 / (1350 / 160) - 1, 10);
+  });
+
+  it('금: 내린 날 등락률을 음수로, 종가는 일별 추이', async () => {
+    const nh = nhFake((p) =>
+      p === '/krgold/quote/v1/goldCurrent'
+        ? { rsp_msg: '조회완료', Output_0: { stck_prpr: 156760, prdy_ctrt: 0.15, prdy_vrss_sign: '5' } }
+        : { rsp_msg: '조회완료', Output_0: [{ bsop_date: '26/11/24', stck_prpr: 156760 }, { bsop_date: '26/11/23', stck_prpr: 157000 }] },
+    );
+    const q = await quoteMarket(nh, 'GOLD:KRX', after);
+    expect(q!.price).toBe(156760);
+    expect(q!.change).toBeCloseTo(-0.0015, 10);
+    expect(q).toMatchObject({ close: 156760, closeDate: '20261124' });
+    expect(q!.closeChange).toBeCloseTo(156760 / 157000 - 1, 10);
   });
 });

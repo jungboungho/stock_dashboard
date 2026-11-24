@@ -347,6 +347,79 @@ export async function quoteUs(nh: NhClient, code: string, now = new Date()): Pro
   return { price: n(o?.trdprc) || null, change: pct === undefined || pct === null || pct === '' ? null : n(pct) / 100, ...closes, msg: s(r.rsp_msg) };
 }
 
+/**
+ * 지수 · 환율 · 금 (관심 종목 '발견' 그룹). 종목 코드와 겹치지 않게 접두어를 붙인 코드로 주고받는다.
+ *  - 지수 · 환율: 해외 지수/환율 기간별 시세 (코스피도 여기서만 나옴, 코스닥은 NH API 에 없음)
+ *  - 금: KRX 금현물 1kg (원/g)
+ */
+type MarketDef =
+  | { kind: 'index' | 'fx'; iem: string; tz: string; open: number; close: number }
+  | { kind: 'fxCross'; base: string; quote: string }
+  | { kind: 'gold'; iem: string };
+const SEOUL = { tz: 'Asia/Seoul', open: 9 * 60, close: 15 * 60 + 30 };
+const NEW_YORK = { tz: 'America/New_York', open: 9 * 60 + 30, close: 16 * 60 };
+/** 환율은 24시간 움직이므로 '종가' = 어제 마지막 값 */
+const ALL_DAY = { tz: 'Asia/Seoul', open: 0, close: 24 * 60 };
+export const MARKET_CODES: Record<string, MarketDef> = {
+  'IDX:KOSPI': { kind: 'index', iem: 'KOSPI', ...SEOUL },
+  'IDX:COMP': { kind: 'index', iem: 'COMP', ...NEW_YORK },
+  'IDX:SPX': { kind: 'index', iem: 'SPX', ...NEW_YORK },
+  'IDX:DJI': { kind: 'index', iem: '.DJI', ...NEW_YORK },
+  'IDX:SOX': { kind: 'index', iem: 'SOXX', ...NEW_YORK },
+  'FX:USDKRW': { kind: 'fx', iem: 'KRW', ...ALL_DAY },
+  // 원/엔(100엔) = (원/달러) ÷ (엔/달러) × 100
+  'FX:JPYKRW': { kind: 'fxCross', base: 'KRW', quote: 'JPY' },
+  'GOLD:KRX': { kind: 'gold', iem: 'M04020000' },
+};
+
+/** 등락 부호(1 상한 · 2 상승 · 3 보합 · 4 하한 · 5 하락)로 부호 없는 등락률을 바로잡는다 */
+export function signedPct(pct: unknown, sign: unknown): number | null {
+  if (pct === undefined || pct === null || pct === '') return null;
+  const v = Math.abs(n(pct)) / 100;
+  const sg = s(sign);
+  return sg === '4' || sg === '5' ? -v : sg === '3' ? 0 : sg === '1' || sg === '2' ? v : n(pct) / 100;
+}
+
+async function indexFx(nh: NhClient, iem: string, now: Date) {
+  const r = await nh.call('/gbstock/quote/v1/symbolIndexFxPeriod', { iem_cd: iem, end_dt: marketClock(now, 'Asia/Seoul').date, array_cnt: '4', maxavg: '0', gubun: '1', xtick: '001', today_cls: '0', scale_change: '0' });
+  const o = rows(r, 'Output_0')[0];
+  return {
+    price: n(o?.ovrs_prpr) || null,
+    change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign),
+    days: rows(r, 'Output_1').map((x) => ({ date: ymdOf(x.bsop_date), close: n(x.ovrs_prpr) })),
+    msg: s(r.rsp_msg),
+  };
+}
+
+export async function quoteMarket(nh: NhClient, code: string, now = new Date()): Promise<Quote | null> {
+  const def = MARKET_CODES[code];
+  if (!def) return null;
+  if (def.kind === 'index' || def.kind === 'fx') {
+    const q = await indexFx(nh, def.iem, now);
+    return { price: q.price, change: q.change, ...pickClose(q.days, marketClock(now, def.tz), def.open, def.close), msg: q.msg };
+  }
+  if (def.kind === 'fxCross') {
+    const a = await indexFx(nh, def.base, now);
+    const b = await indexFx(nh, def.quote, now);
+    const bOn = new Map(b.days.map((d) => [d.date, d.close]));
+    const days = a.days.filter((d) => d.close && bOn.get(d.date)).map((d) => ({ date: d.date, close: (d.close / bOn.get(d.date)!) * 100 }));
+    return {
+      price: a.price && b.price ? (a.price / b.price) * 100 : null,
+      change: a.change !== null && b.change !== null ? (1 + a.change) / (1 + b.change) - 1 : null,
+      ...pickClose(days, marketClock(now, ALL_DAY.tz), ALL_DAY.open, ALL_DAY.close),
+      msg: a.msg || b.msg,
+    };
+  }
+  // 금현물: 현재가 + 일별 추이(등락률은 부호가 없어 종가로 계산)
+  const cur = await nh.call('/krgold/quote/v1/goldCurrent', { iem_cd: def.iem });
+  const o = rows(cur, 'Output_0')[0];
+  const clock = marketClock(now, SEOUL.tz);
+  const from = new Date(now.getTime() - 14 * 86_400_000);
+  const t = await nh.call('/krgold/quote/v1/goldDailyTrend', { iem_cd: def.iem, sdate: marketClock(from, SEOUL.tz).date, edate: clock.date, gubun: '1' });
+  const days = rows(t, 'Output_0').map((x) => ({ date: ymdOf(x.bsop_date), close: n(x.stck_prpr) }));
+  return { price: n(o?.stck_prpr) || null, change: signedPct(o?.prdy_ctrt, o?.prdy_vrss_sign), ...pickClose(days, clock, SEOUL.open, SEOUL.close), msg: s(cur.rsp_msg) };
+}
+
 const failed = (r: Json, block: string) => !rows(r, block).length && !/완료|정상|조회/.test(s(r.rsp_msg));
 
 export async function buildSync(cfg: NhConfig, quotes: { code: string; currency: Currency }[], ledger: LedgerStore | null = null): Promise<SyncResult> {
@@ -427,7 +500,7 @@ export async function buildSync(cfg: NhConfig, quotes: { code: string; currency:
   for (const a of accounts) for (const r of a.rows) if (r.code && !targets.has(r.code)) targets.set(r.code, r.currency);
   for (const [code, currency] of targets) {
     try {
-      const q = currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
+      const q = MARKET_CODES[code] ? await quoteMarket(nh, code) : currency === 'KRW' ? (/^[0-9A-Z]{6}$/.test(code) ? await quoteKr(nh, code) : null) : await quoteUs(nh, code);
       if (!q) continue;
       if (q.change !== null) changes[code] = q.change;
       if (q.close) closes[code] = { close: q.close, date: q.closeDate, change: q.closeChange };
