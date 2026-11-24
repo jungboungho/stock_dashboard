@@ -498,6 +498,10 @@ function buildControls() {
     setMenu(false);
     void runSync();
   });
+  $('side-sync').addEventListener('click', () => {
+    setDrawer(false);
+    void runSync();
+  });
   $('menu-excel').addEventListener('click', () => {
     setMenu(false);
     void pickExcel('import');
@@ -587,6 +591,13 @@ function buildSourceControls() {
   $('sync-state').textContent = loadSyncSettings()
     ? `NH 계좌 잔고 · 모든 종목 현재가${synced ? ` · 마지막 ${timeLabel(synced)}` : ''}`
     : '엑셀 "설정" 시트에 중계 서버 주소 · 접속 토큰이 필요합니다';
+  $('side-sync-state').textContent = !excelBook
+    ? '엑셀을 먼저 불러오세요'
+    : synced
+      ? `마지막 ${timeLabel(synced)}`
+      : loadSyncSettings()
+        ? 'NH 잔고 · 현재가 · 관심 종목 시세'
+        : '중계 서버 설정이 필요합니다';
   $('export-state').textContent = excelHandle ? `${excelHandle.name}에 바로 저장` : '보유종목 · 그룹 · 일별 / 월별 자산추이 시트를 넣은 엑셀 파일 저장';
 
   const accSeg = $('account-seg');
@@ -1313,7 +1324,25 @@ function confirmClearData() {
   });
 }
 
+let syncing = false;
+
+/** 메뉴 · 사이드바 어디서 눌러도 한 번에 하나만 */
 async function runSync() {
+  if (syncing) return;
+  syncing = true;
+  const btn = $<HTMLButtonElement>('side-sync');
+  btn.disabled = true;
+  btn.textContent = '가져오는 중…';
+  try {
+    await runSyncOnce();
+  } finally {
+    syncing = false;
+    btn.disabled = false;
+    btn.textContent = '최신 정보 가져오기';
+  }
+}
+
+async function runSyncOnce() {
   if (!excelBook) {
     showNote('먼저 "① 엑셀 불러오기"로 주식.xlsx를 불러오세요. 엑셀의 계좌 · 입금 기록 위에 최신 잔고와 현재가를 반영합니다.', true);
     return;

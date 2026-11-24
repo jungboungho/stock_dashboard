@@ -1065,8 +1065,19 @@ html {
 .side-nav a[hidden] {
   display: none;
 }
-.side-period {
+.side-sync {
   margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.side-sync .btn {
+  width: 100%;
+  justify-content: center;
+}
+.side-period {
   border-top: 1px solid var(--border);
   padding-top: 14px;
   display: flex;
